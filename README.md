@@ -2,7 +2,7 @@
 
 Ask questions about legal PDFs and get answers with page-level citations. Every claim in an answer links to the page it came from, and the app refuses to answer when the documents don't contain it.
 
-> Rebuild in progress (`rebuild/v2`). The original Streamlit prototype lives in [`legacy/`](legacy/).
+> Rebuild in progress. The original Streamlit + FAISS + Ollama prototype is preserved at [commit `38f8892`](https://github.com/rumanmlk/Lexio/tree/38f8892).
 
 ## Architecture
 
