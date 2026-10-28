@@ -1,9 +1,12 @@
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from vector_database import load_or_build_faiss, get_faiss_retriever
 from langchain_core.prompts import ChatPromptTemplate
 
+load_dotenv()  # reads GROQ_API_KEY from .env
+
 # 1) LLM setup
-llm_model = ChatGroq(model="deepseek-r1-distill-llama-70b")
+llm_model = ChatGroq(model="openai/gpt-oss-120b")
 
 # 2) Build or load the FAISS index when given a pdf path
 def build_or_load_faiss(pdf_path: str):

@@ -9,7 +9,7 @@ from langchain_community.vectorstores import FAISS
 # Paths & embedding model
 PDFS_DIR    = "pdfs"
 FAISS_DIR   = "vectorstore/faiss"
-EMBED_MODEL = OllamaEmbeddings(model="deepseek-r1:1.5b")
+EMBED_MODEL = OllamaEmbeddings(model="nomic-embed-text")
 
 def load_pdf(path: str):
     """Load PDF pages into LangChain Document objects."""
@@ -29,42 +29,44 @@ def build_faiss_from_pdf(pdf_path: str, progress_callback=None):
     """
     Build a FAISS index:
       1. Load & chunk the PDF.
-      2. Embed the first batch to bootstrap the index.
-      3. Parallelize embedding of remaining batches.
+      2. Embed batches in parallel.
+      3. Build the index from all chunks, keeping metadata.
       4. Save index locally.
     """
     # 1) Load and split
     docs   = load_pdf(pdf_path)
     chunks = chunkify(docs)
 
-    # 2) Bootstrap with first non-empty batch
+    if not chunks:
+        raise ValueError(f"No extractable text found in {pdf_path}")
+
+    # 2) Embed all batches in parallel (results kept in order)
     batch_size    = 16
     total_batches = math.ceil(len(chunks) / batch_size)
+    done          = 0
 
-    first_texts = [c.page_content for c in chunks[:batch_size]]
-    first_embs  = embed_batch(first_texts)
-
-    # Initialize FAISS index from these embeddings
-    idx = FAISS.from_embeddings(
-        zip(first_texts, first_embs),
-        EMBED_MODEL
-    )
-    if progress_callback:
-        progress_callback(1 / total_batches)
-
-    # 3) Process remaining batches in parallel
     def process_batch(batch_idx):
+        nonlocal done
         start = batch_idx * batch_size
-        end   = min(start + batch_size, len(chunks))
-        texts = [c.page_content for c in chunks[start:end]]
+        texts = [c.page_content for c in chunks[start:start + batch_size]]
         embs  = embed_batch(texts)
-        idx.add_documents(chunks[start:end], embs)
+        done += 1
         if progress_callback:
-            progress_callback((batch_idx + 1) / total_batches)
+            progress_callback(done / total_batches)
+        return embs
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        # skip batch 0 since we already did it
-        executor.map(process_batch, range(1, total_batches))
+        # list() consumes the iterator so worker exceptions are raised here
+        batch_embs = list(executor.map(process_batch, range(total_batches)))
+
+    all_embs = [e for batch in batch_embs for e in batch]
+
+    # 3) Build the index with chunk text, embeddings and metadata (page, source)
+    idx = FAISS.from_embeddings(
+        [(c.page_content, e) for c, e in zip(chunks, all_embs)],
+        EMBED_MODEL,
+        metadatas=[c.metadata for c in chunks],
+    )
 
     # 4) Persist index
     os.makedirs(FAISS_DIR, exist_ok=True)
