@@ -1,47 +1,71 @@
 # Lexio
 
-Document-grounded legal Q&A. Upload a PDF, index it locally, then ask questions that are answered only from retrieved chunks.
+Ask questions about legal PDFs and get answers with page-level citations. Every claim in an answer links to the page it came from, and the app refuses to answer when the documents don't contain it.
 
-This is a personal prototype, not legal advice.
+> Rebuild in progress (`rebuild/v2`). The original Streamlit prototype lives in [`legacy/`](legacy/).
 
-## What it does
-
-1. Upload a PDF in Streamlit (`frontend.py`).
-2. Split the text (chunk size 500, overlap 50) and embed with Ollama (`deepseek-r1:1.5b`).
-3. Store vectors in a local FAISS index (`vectorstore/faiss`).
-4. Retrieve with MMR (`k=10`) and answer with Groq (`deepseek-r1-distill-llama-70b`) via LangChain.
-
-## Stack
-
-Python · Streamlit · LangChain · FAISS · pdfplumber · Ollama · Groq
-
-## Setup
-
-**Needs:** Python 3.11+, [Ollama](https://ollama.com) running locally, and a [Groq API key](https://console.groq.com).
-
-```bash
-ollama pull deepseek-r1:1.5b
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+## Architecture
 
 ```
-
-Set `GROQ_API_KEY` in your environment (or a `.env` file in the repo root).
-
-```bash
-streamlit run frontend.py
+PDF ──► pypdf ──► page-bounded chunks ──► embeddings ──► Postgres (pgvector HNSW + tsvector GIN)
+                                                                │
+question ──► embed ──┬─► vector top-30 ──┐                      │
+                     └─► keyword top-30 ─┴─► RRF fusion ──► top-6 ──► LLM (streamed, cited)
 ```
 
-Upload a PDF, wait for indexing, then ask questions in the chat box.
+| Layer | Choice | Why |
+|---|---|---|
+| API | FastAPI, async psycopg 3, SSE streaming | Deploys on Vercel with zero config |
+| Storage | Postgres + pgvector (Neon in production) | One database for vectors, full-text search and metadata |
+| Retrieval | Hybrid: cosine similarity + Postgres full-text, fused with Reciprocal Rank Fusion | Dense search misses exact terms (article numbers, defined words); keyword search misses paraphrase |
+| Embeddings | `gemini-embedding-2` at 768 dims (free tier); `bge-base-en-v1.5` locally | Same 768-dim column for both |
+| LLM | `openai/gpt-oss-120b` on Groq | Free tier, reasoning kept out of the answer text |
+| Chunking | Per page, ~1200 chars, 150 overlap, never crossing a page | Every citation points at exactly one page |
 
-## Layout
+Chunks and citations are the product. If the best match has no keyword hit and a weak cosine similarity, `/api/chat` refuses instead of guessing.
 
-| File | Role |
-| --- | --- |
-| `frontend.py` | Streamlit UI, upload, chat |
-| `vector_database.py` | PDF load, chunk, embed, FAISS |
-| `rag_pipeline.py` | Retriever + Groq QA prompt |
+## Run the backend
 
-MIT.
+Needs Docker and [uv](https://docs.astral.sh/uv/).
+
+```bash
+docker compose up -d db
+cp .env.example .env        # add GROQ_API_KEY and GEMINI_API_KEY
+cd backend
+uv sync --group dev
+uv run uvicorn app.main:app --reload
+```
+
+API docs at http://localhost:8000/docs.
+
+```bash
+uv run pytest               # unit tests + end-to-end against local Postgres, no API keys needed
+uv run ruff check .
+```
+
+### Evaluate retrieval
+
+```bash
+uv sync --group local-embeddings
+uv run python -m evals.run --provider local --sweep
+```
+
+Results are written to `backend/evals/results/`.
+
+## API
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/api/documents` | multipart PDF upload; deduplicated by SHA-256 |
+| `GET` | `/api/documents` | list |
+| `DELETE` | `/api/documents/{id}` | delete with its chunks |
+| `POST` | `/api/chat` | `{question, document_ids?}`, answers as Server-Sent Events: `sources`, `token`…, `done`/`error` |
+
+## Roadmap
+
+- [x] Phase 1: FastAPI + pgvector + hybrid retrieval + citations + eval harness
+- [ ] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page
+- [ ] Phase 3: auth, per-user documents, rate limiting
+- [ ] Phase 4: Vercel + Neon deployment, Langfuse tracing, CI evals
+
+Not legal advice. MIT licensed.
