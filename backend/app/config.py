@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     chunk_overlap_chars: int = 150
     retrieve_candidates: int = 30
     retrieve_top_k: int = 6
-    # With no keyword hit and a best cosine similarity below this, we refuse instead of guessing.
-    # Provisional: calibrate per embedding model with `python -m evals.run`.
+    # Weight of the keyword ranking in RRF (vector = 1.0). 0.25 gave the best recall in evals.
+    keyword_weight: float = 0.25
+    # Refuse when the best cosine similarity is below this. Similarity scales differ per
+    # embedding model: 0.5 is calibrated for bge-base-en-v1.5 only. Re-run
+    # `python -m evals.run --provider gemini --sweep` and set MIN_SIMILARITY for Gemini.
     min_similarity: float = 0.5
 
     max_upload_mb: int = 25

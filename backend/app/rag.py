@@ -32,10 +32,11 @@ def cited_numbers(answer: str, n_sources: int) -> list[int]:
 
 
 def should_refuse(r: Retrieval, min_similarity: float) -> bool:
-    """Refuse when nothing matched by keyword and the best embedding match is weak."""
-    if not r.hits:
-        return True
-    return not r.has_keyword_match and r.top_similarity < min_similarity
+    """Refuse when the best embedding match is weak.
+
+    Keyword hits are deliberately ignored: in evals every out-of-scope question still
+    matched at least one term, so a keyword override never let the gate fire."""
+    return not r.hits or r.top_similarity < min_similarity
 
 
 def source_payload(i: int, h: Hit) -> dict:

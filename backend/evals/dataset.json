@@ -1,0 +1,422 @@
+[
+ {
+  "id": "a01",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "What does the Declaration say about slavery and the slave trade?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "slaveryandtheslavetradeshallbeprohibited",
+  "answerable": true
+ },
+ {
+  "id": "a02",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Who is presumed innocent until proved guilty?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "presumedinnocentuntilprovedguilty",
+  "answerable": true
+ },
+ {
+  "id": "a03",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "What protection exists against interference with my privacy, family, home or correspondence?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "arbitraryinterferencewithhisprivacy",
+  "answerable": true
+ },
+ {
+  "id": "a04",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Can the authorities detain me without a reason?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "nooneshallbesubjectedtoarbitraryarrest",
+  "answerable": true
+ },
+ {
+  "id": "a05",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Can a person be forced to join an association?",
+  "gold_pages": [
+   5
+  ],
+  "evidence": "compelledtobelongtoanassociation",
+  "answerable": true
+ },
+ {
+  "id": "a06",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Do men and women have the right to marry and found a family?",
+  "gold_pages": [
+   5
+  ],
+  "evidence": "righttomarryandtofoundafamily",
+  "answerable": true
+ },
+ {
+  "id": "a07",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Is freedom of opinion and expression guaranteed?",
+  "gold_pages": [
+   5
+  ],
+  "evidence": "freedomofopinionandexpression",
+  "answerable": true
+ },
+ {
+  "id": "a08",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "What does it say about equal pay for equal work?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "equalpayforequalwork",
+  "answerable": true
+ },
+ {
+  "id": "a09",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Do workers have a right to holidays with pay?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "periodicholidayswithpay",
+  "answerable": true
+ },
+ {
+  "id": "a10",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Should elementary education be compulsory?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "elementaryeducationshallbecompulsory",
+  "answerable": true
+ },
+ {
+  "id": "a11",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "What standard of living is everyone entitled to?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "standardoflivingadequate",
+  "answerable": true
+ },
+ {
+  "id": "a12",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Who has the prior right to choose the kind of education given to children?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "parentshaveapriorrighttochoose",
+  "answerable": true
+ },
+ {
+  "id": "a13",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "How are the moral and material interests of authors and artists protected?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "moralandmaterialinterests",
+  "answerable": true
+ },
+ {
+  "id": "a14",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "On what grounds can rights and freedoms be limited by law?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "limitationsasaredeterminedbylaw",
+  "answerable": true
+ },
+ {
+  "id": "a15",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Can the Declaration be used to justify destroying other people's rights?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "destructionofanyoftherightsandfreedoms",
+  "answerable": true
+ },
+ {
+  "id": "a16",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Do people have the right to seek asylum from persecution?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "asylumfrompersecution",
+  "answerable": true
+ },
+ {
+  "id": "a17",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Does everyone have a right to a nationality?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "righttoanationality",
+  "answerable": true
+ },
+ {
+  "id": "a18",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "May I practise my religion in public?",
+  "gold_pages": [
+   5
+  ],
+  "evidence": "manifesthisreligionorbelief",
+  "answerable": true
+ },
+ {
+  "id": "a19",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "Can workers form and join trade unions?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "formandtojointradeunions",
+  "answerable": true
+ },
+ {
+  "id": "a20",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "question": "What does the preamble say about barbarous acts?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "barbarousacts",
+  "answerable": true
+ },
+ {
+  "id": "a21",
+  "doc": "crc.pdf",
+  "question": "At what age does a person stop being a child under the Convention?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "everyhumanbeingbelowtheageofeighteen",
+  "answerable": true
+ },
+ {
+  "id": "a22",
+  "doc": "crc.pdf",
+  "question": "Which principle must guide all actions concerning children?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "bestinterestsofthechildshallbeaprimaryconsideration",
+  "answerable": true
+ },
+ {
+  "id": "a23",
+  "doc": "crc.pdf",
+  "question": "Does every child have an inherent right to life?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "inherentrighttolife",
+  "answerable": true
+ },
+ {
+  "id": "a24",
+  "doc": "crc.pdf",
+  "question": "When must a child be registered after birth?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "registeredimmediatelyafterbirth",
+  "answerable": true
+ },
+ {
+  "id": "a25",
+  "doc": "crc.pdf",
+  "question": "Can a child be separated from their parents against their will?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "separatedfromhisorherparentsagainsttheirwill",
+  "answerable": true
+ },
+ {
+  "id": "a26",
+  "doc": "crc.pdf",
+  "question": "Can a child express their own views in matters affecting them?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "capableofformingh",
+  "answerable": true
+ },
+ {
+  "id": "a27",
+  "doc": "crc.pdf",
+  "question": "Does a child have freedom of thought, conscience and religion?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "freedomofthought",
+  "answerable": true
+ },
+ {
+  "id": "a28",
+  "doc": "crc.pdf",
+  "question": "What protection do refugee children get?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "refugee",
+  "answerable": true
+ },
+ {
+  "id": "a29",
+  "doc": "crc.pdf",
+  "question": "What care do mentally or physically disabled children have a right to?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "mentallyorphysicallydisabled",
+  "answerable": true
+ },
+ {
+  "id": "a30",
+  "doc": "crc.pdf",
+  "question": "What right does the child have to health care?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "highestattainablestandardofhealth",
+  "answerable": true
+ },
+ {
+  "id": "a31",
+  "doc": "crc.pdf",
+  "question": "Must primary education be compulsory and free?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "primaryeducationcompulsoryandavailablefree",
+  "answerable": true
+ },
+ {
+  "id": "a32",
+  "doc": "crc.pdf",
+  "question": "Does a child have a right to rest, leisure and play?",
+  "gold_pages": [
+   9
+  ],
+  "evidence": "restandleisure",
+  "answerable": true
+ },
+ {
+  "id": "a33",
+  "doc": "crc.pdf",
+  "question": "How are children protected from economic exploitation and harmful work?",
+  "gold_pages": [
+   9
+  ],
+  "evidence": "economicexploitation",
+  "answerable": true
+ },
+ {
+  "id": "a34",
+  "doc": "crc.pdf",
+  "question": "Are the death penalty or life imprisonment allowed for offences by under-18s?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "capitalpunishment",
+  "answerable": true
+ },
+ {
+  "id": "a35",
+  "doc": "crc.pdf",
+  "question": "How are children protected from sexual exploitation?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "sexualexploitation",
+  "answerable": true
+ },
+ {
+  "id": "a36",
+  "doc": "crc.pdf",
+  "question": "Are children protected from narcotic drugs?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "narcotic",
+  "answerable": true
+ },
+ {
+  "id": "a37",
+  "doc": "crc.pdf",
+  "question": "At what age may children take a direct part in hostilities?",
+  "gold_pages": [
+   11
+  ],
+  "evidence": "directpartinhostilities",
+  "answerable": true
+ },
+ {
+  "id": "a38",
+  "doc": "crc.pdf",
+  "question": "How many experts sit on the Committee on the Rights of the Child?",
+  "gold_pages": [
+   12
+  ],
+  "evidence": "tenexperts",
+  "answerable": true
+ },
+ {
+  "id": "u01",
+  "question": "What is the notice period for terminating a commercial lease?",
+  "answerable": false
+ },
+ {
+  "id": "u02",
+  "question": "What is the maximum interest rate on a consumer loan?",
+  "answerable": false
+ },
+ {
+  "id": "u03",
+  "question": "What is the corporate tax rate in Delaware?",
+  "answerable": false
+ },
+ {
+  "id": "u04",
+  "question": "What are the penalties for breaching a non-disclosure agreement?",
+  "answerable": false
+ },
+ {
+  "id": "u05",
+  "question": "Who is the current Secretary-General of the United Nations?",
+  "answerable": false
+ },
+ {
+  "id": "u06",
+  "question": "What is the capital gains tax rate for long-term investments?",
+  "answerable": false
+ },
+ {
+  "id": "u07",
+  "question": "How is cryptocurrency regulated under this document?",
+  "answerable": false
+ },
+ {
+  "id": "u08",
+  "question": "What is the speed limit on motorways?",
+  "answerable": false
+ }
+]

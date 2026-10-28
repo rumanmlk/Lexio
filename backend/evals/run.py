@@ -17,6 +17,8 @@ from pathlib import Path
 
 import psycopg
 
+import app  # noqa: F401  (sets the Windows event-loop policy before asyncio.run creates a loop)
+
 ROOT = Path(__file__).resolve().parents[2]
 DATASET = Path(__file__).parent / "dataset.json"
 RESULTS = Path(__file__).parent / "results"
@@ -65,27 +67,36 @@ async def main(provider: str, sweep: bool) -> None:
     unanswerable = [i for i in items if not i["answerable"]]
 
     rows, sims = [], {"answerable": [], "unanswerable": []}
-    for mode in ("vector", "keyword", "hybrid"):
+    configs = [
+        ("vector", "vector", 1.0),
+        ("keyword", "keyword", 1.0),
+        ("hybrid, keyword weight 1.0", "hybrid", 1.0),
+        ("hybrid, keyword weight 0.5", "hybrid", 0.5),
+        ("hybrid, keyword weight 0.25", "hybrid", 0.25),
+    ]
+    for label, mode, weight in configs:
         ranks, latencies = [], []
         for it in answerable:
             t = time.perf_counter()
             res = await retrieve(pool, embedder, it["question"], owner_id="eval", mode=mode,
-                                 candidates=s.retrieve_candidates, top_k=max(KS))
+                                 candidates=s.retrieve_candidates, top_k=max(KS),
+                                 keyword_weight=weight)
             latencies.append(time.perf_counter() - t)
             ranks.append(score_item(res.hits, it["doc"], set(it["gold_pages"])))
-            if mode == "hybrid":
+            if label == "vector":  # top_similarity is the vector side's, whatever the fusion
                 sims["answerable"].append((res.top_similarity, res.has_keyword_match))
         hit = {k: sum(1 for r in ranks if r and r <= k) / len(ranks) for k in KS}
         mrr = sum(1 / r for r in ranks if r) / len(ranks)
-        rows.append((mode, hit, mrr, statistics.median(latencies) * 1000))
+        rows.append((label, hit, mrr, statistics.median(latencies) * 1000))
 
     for it in unanswerable:
         res = await retrieve(pool, embedder, it["question"], owner_id="eval", mode="hybrid",
                              candidates=s.retrieve_candidates, top_k=max(KS))
         sims["unanswerable"].append((res.top_similarity, res.has_keyword_match))
 
-    def refusal(pairs, thr):
-        return sum(1 for sim, kw in pairs if not kw and sim < thr) / max(len(pairs), 1)
+    def refusal(pairs, thr, use_keywords):
+        n = sum(1 for sim, kw in pairs if sim < thr and not (use_keywords and kw))
+        return n / max(len(pairs), 1)
 
     lines = [
         f"# Retrieval eval: `{provider}` embeddings",
@@ -106,17 +117,27 @@ async def main(provider: str, sweep: bool) -> None:
         "",
         "## Refusal gate (hybrid)",
         "",
-        "Refuse when there is no keyword hit and best cosine similarity < threshold.",
+        "`sim-only` refuses when the best cosine similarity is below the threshold. "
+        "`sim+keyword` additionally requires zero keyword hits, so any OR-matched term "
+        "disables refusal.",
         "",
-        "| threshold | correctly refused (unanswerable) | wrongly refused (answerable) |",
-        "|---|---|---|",
+        "| threshold | sim-only: refused unanswerable | sim-only: wrongly refused "
+        "| sim+keyword: refused unanswerable | sim+keyword: wrongly refused |",
+        "|---|---|---|---|---|",
     ]
     thresholds = [0.3, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7] if sweep else [s.min_similarity]
+    ua, an = sims["unanswerable"], sims["answerable"]
     for thr in thresholds:
         lines.append(
-            f"| {thr:.2f} | {refusal(sims['unanswerable'], thr):.0%} "
-            f"| {refusal(sims['answerable'], thr):.0%} |"
+            f"| {thr:.2f} | {refusal(ua, thr, False):.0%} | {refusal(an, thr, False):.0%} "
+            f"| {refusal(ua, thr, True):.0%} | {refusal(an, thr, True):.0%} |"
         )
+    lines += ["", "Best cosine similarity per question (hybrid):", ""]
+    for label, pairs in (("answerable", an), ("unanswerable", ua)):
+        vals = sorted(round(x, 3) for x, _ in pairs)
+        lines.append(f"- {label}: min {vals[0]}, median {vals[len(vals) // 2]}, max {vals[-1]}")
+    with_kw = sum(1 for _, k in ua if k)
+    lines.append(f"- unanswerable questions with a keyword hit: {with_kw}/{len(ua)}")
     out = "\n".join(lines) + "\n"
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / f"{provider}.md").write_text(out, encoding="utf-8")

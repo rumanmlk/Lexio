@@ -17,12 +17,29 @@ question ──► embed ──┬─► vector top-30 ──┐                
 |---|---|---|
 | API | FastAPI, async psycopg 3, SSE streaming | Deploys on Vercel with zero config |
 | Storage | Postgres + pgvector (Neon in production) | One database for vectors, full-text search and metadata |
-| Retrieval | Hybrid: cosine similarity + Postgres full-text, fused with Reciprocal Rank Fusion | Dense search misses exact terms (article numbers, defined words); keyword search misses paraphrase |
+| Retrieval | Hybrid: cosine similarity + Postgres full-text, fused with weighted Reciprocal Rank Fusion (keyword weight 0.25) | Keyword search catches exact terms but is noisy on its own; see the numbers below |
 | Embeddings | `gemini-embedding-2` at 768 dims (free tier); `bge-base-en-v1.5` locally | Same 768-dim column for both |
 | LLM | `openai/gpt-oss-120b` on Groq | Free tier, reasoning kept out of the answer text |
 | Chunking | Per page, ~1200 chars, 150 overlap, never crossing a page | Every citation points at exactly one page |
 
-Chunks and citations are the product. If the best match has no keyword hit and a weak cosine similarity, `/api/chat` refuses instead of guessing.
+Chunks and citations are the product. If the best chunk's cosine similarity is below `MIN_SIMILARITY`, `/api/chat` refuses instead of guessing.
+
+## Measured results
+
+38 answerable and 8 unanswerable questions over two public documents (the UDHR and the UN Convention on the Rights of the Child). Gold pages are checked against the PDFs by a test. Embeddings: `bge-base-en-v1.5` run locally; the Gemini numbers are still to come.
+
+| retrieval | hit@1 | hit@3 | hit@6 | MRR |
+|---|---|---|---|---|
+| vector only | 0.74 | 0.89 | 0.97 | 0.830 |
+| keyword only | 0.53 | 0.79 | 0.79 | 0.649 |
+| hybrid, equal weights | 0.61 | 0.84 | 0.95 | 0.737 |
+| hybrid, keyword weight 0.25 (default) | 0.68 | 0.97 | 1.00 | 0.821 |
+
+- Equal-weight fusion was **worse** than vector alone; down-weighting the noisy keyword side fixed that. Hybrid wins on recall (hit@6, what the LLM actually reads), vector alone is still marginally better at rank 1.
+- A refusal gate that treated any keyword hit as evidence never fired: all 8 out-of-scope questions matched a term. The gate now uses cosine similarity only; at 0.50 it refuses 75% of out-of-scope questions with no false refusals, at 0.55 it refuses all of them with 1 false refusal.
+- Caveats: small set (one question is about 3 points), the keyword weight was tuned on the same set, and the unanswerable questions are out-of-domain rather than adversarial. Similarity thresholds are model-specific and must be re-calibrated for Gemini.
+
+Full output: [`backend/evals/results/local.md`](backend/evals/results/local.md).
 
 ## Run the backend
 

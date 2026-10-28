@@ -32,12 +32,15 @@ class Retrieval:
     has_keyword_match: bool
 
 
-def rrf(rankings: list[list[int]], k: int = RRF_K) -> dict[int, float]:
-    """Reciprocal Rank Fusion: score(d) = sum over lists of 1 / (k + rank)."""
+def rrf(
+    rankings: list[list[int]], k: int = RRF_K, weights: list[float] | None = None
+) -> dict[int, float]:
+    """Weighted Reciprocal Rank Fusion: score(d) = sum over lists of w / (k + rank)."""
+    weights = weights or [1.0] * len(rankings)
     scores: dict[int, float] = {}
-    for ranking in rankings:
+    for ranking, w in zip(rankings, weights, strict=True):
         for rank, key in enumerate(ranking, start=1):
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            scores[key] = scores.get(key, 0.0) + w / (k + rank)
     return scores
 
 
@@ -80,6 +83,7 @@ async def retrieve(
     mode: Mode = "hybrid",
     candidates: int = 30,
     top_k: int = 6,
+    keyword_weight: float = 1.0,
 ) -> Retrieval:
     params = {"owner": owner_id, "docs": document_ids, "n": candidates}
 
@@ -104,7 +108,7 @@ async def retrieve(
     sims = {cid: sim for cid, sim in vec_rows}
     kw_ids = [cid for cid, _ in kw_rows]
 
-    fused = rrf([[cid for cid, _ in vec_rows], kw_ids])
+    fused = rrf([[cid for cid, _ in vec_rows], kw_ids], weights=[1.0, keyword_weight])
     ranked = sorted(fused, key=fused.__getitem__, reverse=True)[:top_k]
     if not ranked:
         return Retrieval([], 0.0, False)

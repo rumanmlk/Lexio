@@ -127,6 +127,7 @@ async def chat(body: ChatRequest, request: Request, owner: Owner):
             document_ids=body.document_ids,
             candidates=s.retrieve_candidates,
             top_k=s.retrieve_top_k,
+            keyword_weight=s.keyword_weight,
         )
     except psycopg.Error as exc:
         raise HTTPException(503, "Database unavailable") from exc

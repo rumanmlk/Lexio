@@ -42,11 +42,18 @@ def _hit() -> Hit:
     return Hit(1, "00000000-0000-0000-0000-000000000000", "a.pdf", 4, "text", 0.03)
 
 
-def test_should_refuse_only_when_no_keyword_and_weak_similarity():
+def test_should_refuse_on_weak_similarity_even_with_keyword_hit():
     assert should_refuse(Retrieval([], 0.0, False), 0.5)
     assert should_refuse(Retrieval([_hit()], 0.3, False), 0.5)
-    assert not should_refuse(Retrieval([_hit()], 0.3, True), 0.5)
+    assert should_refuse(Retrieval([_hit()], 0.3, True), 0.5)
     assert not should_refuse(Retrieval([_hit()], 0.8, False), 0.5)
+
+
+def test_rrf_weight_lowers_a_lists_influence():
+    equal = rrf([[1, 2], [2, 1]])
+    assert equal[1] == equal[2]
+    weighted = rrf([[1, 2], [2, 1]], weights=[1.0, 0.25])
+    assert weighted[1] > weighted[2]
 
 
 def test_prompt_numbers_sources_from_one():
