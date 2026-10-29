@@ -1,18 +1,16 @@
 import asyncio
-import hashlib
-import hmac
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated
 from uuid import UUID
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import budget, ingest, rag, retrieval
+from app.auth import SAMPLES, User, Who
 from app.config import Settings, get_settings
 from app.db import apply_migrations, open_pool
 from app.embeddings import build_embedder
@@ -44,37 +42,15 @@ app = FastAPI(title="Lexio API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    # "*" does not cover Authorization in browsers, so it is named.
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
 @app.exception_handler(ProviderError)
 async def provider_error_handler(_: Request, exc: ProviderError):
     return JSONResponse({"detail": exc.message}, status_code=exc.status)
-
-
-def owner_id() -> str:
-    """Single shared workspace for now. Auth (phase 3) replaces this one dependency."""
-    return "public"
-
-
-Owner = Annotated[str, Depends(owner_id)]
-
-
-def visitor_id(request: Request) -> str:
-    """Who the per-visitor limits count: a salted hash of the client IP (never stored raw).
-    Behind a proxy that sets X-Forwarded-For itself, its last entry is the real client; trusting
-    the header anywhere else would let a visitor pick their own identity. Auth (phase 3)
-    replaces this with the user id."""
-    s = get_settings()
-    ip = request.client.host if request.client else "unknown"
-    if s.trust_forwarded_for and (fwd := request.headers.get("x-forwarded-for", "").strip()):
-        ip = fwd.split(",")[-1].strip()
-    return hmac.new(s.visitor_salt.encode(), ip.encode(), hashlib.sha256).hexdigest()[:16]
-
-
-Visitor = Annotated[str, Depends(visitor_id)]
 
 
 async def claim_budget(pool, claims: list[budget.Claim]) -> budget.Receipt:
@@ -116,9 +92,56 @@ async def refund_if_unanswered(stream, pool, receipt: budget.Receipt | None):
 
 
 def require_writable(s: Settings) -> None:
-    """In demo mode the workspace is shared, so visitors may neither upload nor delete."""
+    """Switched off with UPLOADS_ENABLED=false; sign-in is checked separately (401)."""
     if not s.uploads_enabled:
-        raise HTTPException(403, "This demo is read-only: the sample documents are already loaded.")
+        raise HTTPException(403, "Uploads are turned off on this server.")
+
+
+async def storage_used(pool, user_id: str | None) -> tuple[int, int]:
+    """(documents, bytes) a user has stored; (0, 0) for an anonymous visitor."""
+    if user_id is None:
+        return 0, 0
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT count(*), coalesce(sum(size_bytes), 0)::bigint FROM documents "
+                "WHERE owner_id = %s",
+                (user_id,),
+            )
+        ).fetchone()
+    return row[0], row[1]
+
+
+async def require_room(pool, s: Settings, user_id: str, nbytes: int) -> None:
+    """403 when one more document of `nbytes` would break the user's storage caps."""
+    try:
+        count, size = await storage_used(pool, user_id)
+    except psycopg.Error as exc:
+        raise HTTPException(503, "Database unavailable") from exc
+    if count >= s.user_max_documents:
+        raise HTTPException(
+            403, f"You can keep {s.user_max_documents} documents. Delete one to upload another."
+        )
+    if size + nbytes > s.user_max_mb * 1024 * 1024:
+        raise HTTPException(
+            403, f"Your documents would use more than {s.user_max_mb} MB. Delete one to make room."
+        )
+
+
+async def require_visible(pool, owners: list[str], ids: set[UUID]) -> None:
+    """404 for a document the caller may not see, exactly as if it did not exist."""
+    try:
+        async with pool.connection() as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT id FROM documents WHERE id = ANY(%s) AND owner_id = ANY(%s)",
+                    (list(ids), owners),
+                )
+            ).fetchall()
+    except psycopg.Error as exc:
+        raise HTTPException(503, "Database unavailable") from exc
+    if len(rows) != len(ids):
+        raise HTTPException(404, "Document not found")
 
 
 class ChatRequest(BaseModel):
@@ -136,7 +159,7 @@ async def health(request: Request):
 
 
 @app.post("/api/documents", status_code=201)
-async def upload_document(request: Request, owner: Owner, visitor: Visitor, file: UploadFile):
+async def upload_document(request: Request, who: User, file: UploadFile):
     s = get_settings()
     require_writable(s)
     if not (file.filename or "").lower().endswith(".pdf"):
@@ -150,8 +173,10 @@ async def upload_document(request: Request, owner: Owner, visitor: Visitor, file
     receipt: budget.Receipt | None = None
 
     async def reserve(chunks: int) -> None:
-        """Runs once the PDF is new and readable, so duplicates and bad files cost nothing."""
+        """Runs once the PDF is new and readable, so duplicates, samples and bad files cost
+        nothing."""
         nonlocal receipt
+        await require_room(pool, s, who.user_id, len(data))
         room = s.embed_daily_limit - s.embed_query_reserve if s.embed_daily_limit else None
         cap = min((c for c in (s.max_upload_chunks, room) if c), default=None)
         if cap and chunks > cap:
@@ -161,7 +186,7 @@ async def upload_document(request: Request, owner: Owner, visitor: Visitor, file
                 f"the limit is {cap}).",
             )
         receipt = await claim_budget(pool, [
-            budget.Claim(budget.visitor_uploads(visitor), 1, s.visitor_upload_limit,
+            budget.Claim(budget.visitor_uploads(who.counter_key), 1, s.visitor_upload_limit,
                          "You have reached today's upload limit."),
             budget.Claim(budget.EMBEDDINGS, chunks, room,
                          "Today's document-processing budget is used up."),
@@ -171,7 +196,8 @@ async def upload_document(request: Request, owner: Owner, visitor: Visitor, file
         result = await ingest.ingest_pdf(
             pool,
             request.app.state.embedder,
-            owner_id=owner,
+            owner_id=who.user_id,
+            reuse_from=[SAMPLES],
             filename=file.filename,
             data=data,
             chunk_chars=s.chunk_chars,
@@ -189,43 +215,48 @@ async def upload_document(request: Request, owner: Owner, visitor: Visitor, file
         "pages": result.page_count,
         "chunks": result.chunk_count,
         "duplicate": result.duplicate,
+        "sample": result.owner_id == SAMPLES,
     }
 
 
 @app.get("/api/documents")
-async def list_documents(request: Request, owner: Owner):
+async def list_documents(request: Request, who: Who):
     async with request.app.state.pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, filename, page_count, chunk_count, created_at FROM documents "
-            "WHERE owner_id = %s ORDER BY created_at DESC",
-            (owner,),
+            "SELECT id, filename, page_count, chunk_count, created_at, owner_id = %s AS sample "
+            "FROM documents WHERE owner_id = ANY(%s) ORDER BY sample DESC, created_at DESC",
+            (SAMPLES, who.owners),
         )
         rows = await cur.fetchall()
     return [
-        {"id": str(r[0]), "filename": r[1], "pages": r[2], "chunks": r[3], "created_at": r[4]}
+        {"id": str(r[0]), "filename": r[1], "pages": r[2], "chunks": r[3], "created_at": r[4],
+         "sample": r[5]}
         for r in rows
     ]
 
 
 @app.get("/api/documents/{document_id}/file")
-async def document_file(document_id: UUID, request: Request, owner: Owner):
+async def document_file(document_id: UUID, request: Request, who: Who):
     async with request.app.state.pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT f.data FROM documents d "
+                "SELECT f.data, d.owner_id FROM documents d "
                 "JOIN document_files f ON f.document_id = d.id "
-                "WHERE d.id = %s AND d.owner_id = %s",
-                (document_id, owner),
+                "WHERE d.id = %s AND d.owner_id = ANY(%s)",
+                (document_id, who.owners),
             )
         ).fetchone()
     if not row:
         raise HTTPException(404, "Document file not found")
+    # A browser cache is keyed by URL, not by who is signed in, so only the samples (readable by
+    # everyone) may be cached; a user's own PDF must be checked again on every request.
+    cache = "private, max-age=3600" if row[1] == SAMPLES else "private, no-store"
     return Response(
         row[0],
         media_type="application/pdf",
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": cache,
             # Uploaded bytes: never let a browser reinterpret them as another type.
             "X-Content-Type-Options": "nosniff",
         },
@@ -233,24 +264,44 @@ async def document_file(document_id: UUID, request: Request, owner: Owner):
 
 
 @app.delete("/api/documents/{document_id}", status_code=204)
-async def delete_document(document_id: UUID, request: Request, owner: Owner):
+async def delete_document(document_id: UUID, request: Request, who: User):
     require_writable(get_settings())
     async with request.app.state.pool.connection() as conn:
         cur = await conn.execute(
-            "DELETE FROM documents WHERE id = %s AND owner_id = %s", (document_id, owner)
+            "DELETE FROM documents WHERE id = %s AND owner_id = %s", (document_id, who.user_id)
         )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Document not found")
+        if cur.rowcount:
+            return
+        shared = await (
+            await conn.execute(
+                "SELECT 1 FROM documents WHERE id = %s AND owner_id = %s", (document_id, SAMPLES)
+            )
+        ).fetchone()
+    if shared:
+        raise HTTPException(403, "The sample documents can't be deleted.")
+    raise HTTPException(404, "Document not found")  # also what someone else's document gets
+
+
+@app.delete("/api/me", status_code=204)
+async def delete_me(request: Request, who: User):
+    """Erase everything stored for this user: documents, their chunks and PDF files (both cascade).
+    Nothing else identifies them: the daily counters are keyed by a salted hash and expire on
+    their own, which also stops a delete-and-sign-up-again from resetting today's limits."""
+    async with request.app.state.pool.connection() as conn:
+        await conn.execute("DELETE FROM documents WHERE owner_id = %s", (who.user_id,))
 
 
 @app.get("/api/limits")
-async def limits(request: Request, visitor: Visitor):
+async def limits(request: Request, who: Who):
     """What this visitor may still do today, so a client can disable controls instead of failing."""
     s = get_settings()
     pool = request.app.state.pool
-    keys = [budget.QUESTIONS, budget.visitor_questions(visitor), budget.visitor_uploads(visitor)]
+    keys = [budget.QUESTIONS, budget.visitor_questions(who.counter_key),
+            budget.visitor_uploads(who.counter_key)]
     try:
-        used, resets_in = await budget.used_today(pool, keys)
+        (used, resets_in), (docs_used, bytes_used) = await asyncio.gather(
+            budget.used_today(pool, keys), storage_used(pool, who.user_id)
+        )
     except psycopg.Error as exc:
         raise HTTPException(503, "Database unavailable") from exc
 
@@ -259,7 +310,11 @@ async def limits(request: Request, visitor: Visitor):
 
     return {
         "demo_mode": s.demo_mode,
-        "uploads_enabled": s.uploads_enabled,
+        "signed_in": who.signed_in,
+        # can this caller upload and delete right now (anonymous visitors never can)
+        "uploads_enabled": s.uploads_enabled and who.signed_in,
+        "documents": {"used": docs_used, "limit": s.user_max_documents},
+        "storage_mb": {"used": round(bytes_used / 1024 / 1024, 1), "limit": s.user_max_mb},
         "max_upload_mb": s.max_upload_mb,
         "max_upload_chunks": s.max_upload_chunks,
         "questions": entry(keys[1], s.visitor_question_limit),
@@ -270,16 +325,18 @@ async def limits(request: Request, visitor: Visitor):
 
 
 @app.post("/api/chat")
-async def chat(body: ChatRequest, request: Request, owner: Owner, visitor: Visitor):
+async def chat(body: ChatRequest, request: Request, who: Who):
     s = get_settings()
     pool = request.app.state.pool
     # Reserved before any provider is called, so a refused request costs nothing. Only limits
     # that are switched on are tracked, so an unlimited deployment pays no database round trips.
     # The query embedding is counted, never refused: it spends the reserve uploads leave alone.
+    if body.document_ids:
+        await require_visible(pool, who.owners, set(body.document_ids))
     claims = []
     if s.visitor_question_limit:
         claims.append(budget.Claim(
-            budget.visitor_questions(visitor), 1, s.visitor_question_limit,
+            budget.visitor_questions(who.counter_key), 1, s.visitor_question_limit,
             f"You have used your {s.visitor_question_limit} questions for today."))
     if s.question_daily_limit:
         claims.append(budget.Claim(
@@ -294,7 +351,7 @@ async def chat(body: ChatRequest, request: Request, owner: Owner, visitor: Visit
             pool,
             request.app.state.embedder,
             query,
-            owner_id=owner,
+            owners=who.owners,
             document_ids=body.document_ids,
             candidates=s.retrieve_candidates,
             top_k=s.retrieve_top_k,

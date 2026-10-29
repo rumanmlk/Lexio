@@ -53,7 +53,8 @@ def or_query(text: str) -> str:
 
 _SCOPE = (
     "FROM chunks c JOIN documents d ON d.id = c.document_id "
-    "WHERE d.owner_id = %(owner)s AND (%(docs)s::uuid[] IS NULL OR c.document_id = ANY(%(docs)s))"
+    "WHERE d.owner_id = ANY(%(owners)s) "
+    "AND (%(docs)s::uuid[] IS NULL OR c.document_id = ANY(%(docs)s))"
 )
 
 _VECTOR_SQL = f"""
@@ -81,14 +82,14 @@ async def retrieve(
     embedder: Embedder,
     query: str,
     *,
-    owner_id: str,
+    owners: list[str],
     document_ids: list[UUID] | None = None,
     mode: Mode = "hybrid",
     candidates: int = 30,
     top_k: int = 6,
     keyword_weight: float = 1.0,
 ) -> Retrieval:
-    params = {"owner": owner_id, "docs": document_ids, "n": candidates}
+    params = {"owners": owners, "docs": document_ids, "n": candidates}
 
     async def vector() -> list[tuple[int, float]]:
         vec = np.asarray(await embedder.embed_query(query), dtype=np.float32)

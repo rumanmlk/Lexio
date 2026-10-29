@@ -6,6 +6,9 @@ import { answerHint } from "./hint.ts";
 import { parseAnswer } from "./answer.ts";
 import { splitCitations } from "./cite.ts";
 import { parseBlock, readEvents } from "./sse.ts";
+import { jwtVerify } from "jose";
+import { mintApiToken } from "./apitoken.ts";
+import { tokenFresh } from "./token.ts";
 
 function streamOf(...parts: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -140,4 +143,34 @@ test("answerHint advises on refusals and uncited answers only", () => {
   assert.equal(answerHint({ ...base, refused: true, streaming: true }), null);
   assert.equal(answerHint({ ...base, refused: true, error: { message: "x" } }), null);
   assert.equal(answerHint({ ...base, refused: null, grounded: null }), null); // stopped before done
+});
+
+test("a cached API token is reused until 30 seconds before it expires", () => {
+  const now = 1_000_000;
+  assert.equal(tokenFresh({ expiresAt: now + 31_000 }, now), true);
+  assert.equal(tokenFresh({ expiresAt: now + 29_000 }, now), false);
+  assert.equal(tokenFresh({ expiresAt: now - 1 }, now), false);
+});
+
+test("the API token carries what the backend requires and expires in 5 minutes", async () => {
+  const config = { secret: "s".repeat(40), issuer: "lexio-web", audience: "lexio-api" };
+  const now = 1_800_000_000;
+  const { token, expires_at } = await mintApiToken("google:123", config, now);
+  assert.equal(expires_at, now + 300);
+
+  const { payload, protectedHeader } = await jwtVerify(token, new TextEncoder().encode(config.secret), {
+    issuer: config.issuer,
+    audience: config.audience,
+    algorithms: ["HS256"],
+    currentDate: new Date((now + 1) * 1000),
+  });
+  assert.equal(protectedHeader.alg, "HS256");
+  assert.equal(payload.sub, "google:123");
+  assert.equal(payload.exp, now + 300);
+
+  // a token signed with another secret, or checked after expiry, is refused
+  await assert.rejects(jwtVerify(token, new TextEncoder().encode("x".repeat(40))));
+  await assert.rejects(
+    jwtVerify(token, new TextEncoder().encode(config.secret), { currentDate: new Date((now + 400) * 1000) }),
+  );
 });

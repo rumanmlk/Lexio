@@ -58,6 +58,6 @@ async def main(provider: str, owner: str) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--provider", choices=["gemini", "local"], default="gemini")
-    ap.add_argument("--owner", default="public", help="owner_id the API serves (default: public)")
+    ap.add_argument("--owner", default="samples", help="owner_id the API shares (default: samples)")
     a = ap.parse_args()
     asyncio.run(main(a.provider, a.owner))

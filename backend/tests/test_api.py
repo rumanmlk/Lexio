@@ -4,20 +4,27 @@ Uses the hash embedder and a fake LLM, so it needs no API keys and runs offline.
 
 import asyncio
 import io
+import json
 import os
+import shutil
+import subprocess
+import time
 from pathlib import Path
 from uuid import uuid4
 
+import jwt
 import psycopg
 import pytest
 from pypdf import PdfWriter
 
 os.environ.setdefault("DATABASE_URL", "postgresql://lexio:lexio@localhost:5433/lexio_test")
 os.environ["EMBEDDING_PROVIDER"] = "hash"
+os.environ["API_TOKEN_SECRET"] = "test-secret-test-secret-test-secret-0123"
+os.environ["ALLOW_DEV_USERS"] = "true"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import budget, main, rag  # noqa: E402
+from app import auth, budget, main, rag  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import open_pool  # noqa: E402
 from app.errors import ProviderError  # noqa: E402
@@ -39,6 +46,20 @@ class FakeLLM:
         return "Everyone has the right to education. [1]"
 
 
+def token(sub="dev:alice", **claims):
+    """A token as the Next.js app mints it, with any claim overridden (None removes it)."""
+    key = claims.pop("_key", None) or get_settings().api_token_secret
+    now = int(time.time())
+    body = {"sub": sub, "iss": "lexio-web", "aud": "lexio-api", "iat": now, "exp": now + 300}
+    body.update(claims)
+    body = {k: v for k, v in body.items() if v is not None}
+    return jwt.encode(body, key, algorithm="HS256")
+
+
+def bearer(sub="dev:alice", **claims):
+    return {"Authorization": f"Bearer {token(sub, **claims)}"}
+
+
 @pytest.fixture(scope="module")
 def client():
     url = get_settings().database_url
@@ -47,8 +68,19 @@ def client():
         conn.execute("DROP DATABASE IF EXISTS lexio_test WITH (FORCE)")
         conn.execute("CREATE DATABASE lexio_test")
     main.build_llm = lambda s: FakeLLM()
-    with TestClient(main.app) as c:
+    with TestClient(main.app, headers=bearer("dev:alice")) as c:  # alice unless a test says so
         yield c
+
+
+@pytest.fixture
+def anon(client):
+    """The same app with no sign-in at all (the app is already running; no new lifespan)."""
+    return TestClient(main.app)
+
+
+@pytest.fixture
+def bob(client):
+    return TestClient(main.app, headers=bearer("dev:bob"))
 
 
 def parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -266,7 +298,7 @@ def limits(client, monkeypatch):
 
 def ask(client, **headers):
     body = {"question": "What is the notice period?"}
-    return client.post("/api/chat", json=body, headers=headers)
+    return client.post("/api/chat", json=body, headers=headers or None)
 
 
 def upload(client, path=SAMPLE):
@@ -289,28 +321,28 @@ def test_visitor_question_limit_returns_429_with_a_reset_time(client, limits):
     assert client.get("/api/limits").json()["questions"] == {"used": 2, "limit": 2}
 
 
-def test_site_wide_limit_is_all_or_nothing_across_counters(client, limits):
+def test_site_wide_limit_is_all_or_nothing_across_counters(anon, limits):
     limits(question_daily_limit=1, trust_forwarded_for=True)
-    assert ask(client, **{"x-forwarded-for": "10.0.0.1"}).status_code == 200
-    assert ask(client, **{"x-forwarded-for": "10.0.0.2"}).status_code == 429
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.1"}).status_code == 200
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.2"}).status_code == 429
     # the refused request must not have been counted against its visitor either
-    assert client.get("/api/limits", headers={"x-forwarded-for": "10.0.0.2"}).json()[
+    assert anon.get("/api/limits", headers={"x-forwarded-for": "10.0.0.2"}).json()[
         "questions"
     ]["used"] == 0
 
 
-def test_visitor_identity_ignores_forwarded_header_unless_trusted(client, limits):
+def test_anonymous_identity_ignores_forwarded_header_unless_trusted(anon, limits):
     limits(visitor_question_limit=1)
-    assert ask(client, **{"x-forwarded-for": "10.0.0.1"}).status_code == 200
-    assert ask(client, **{"x-forwarded-for": "10.0.0.2"}).status_code == 429  # same real client
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.1"}).status_code == 200
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.2"}).status_code == 429  # same real client
     limits(trust_forwarded_for=True)
-    assert ask(client, **{"x-forwarded-for": "10.0.0.3"}).status_code == 200  # a different one
-    assert ask(client, **{"x-forwarded-for": "10.0.0.3"}).status_code == 429
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.3"}).status_code == 200  # a different one
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.3"}).status_code == 429
     # an appended spoof must not help: only the proxy's own (last) entry counts
-    assert ask(client, **{"x-forwarded-for": "10.0.0.9, 10.0.0.3"}).status_code == 429
+    assert ask(anon, **{"x-forwarded-for": "10.0.0.9, 10.0.0.3"}).status_code == 429
 
 
-def test_demo_mode_makes_the_workspace_read_only(client, limits, indexed):
+def test_uploads_switch_turns_off_upload_and_delete_for_everyone(client, limits, indexed):
     limits(uploads_enabled=False)
     assert upload(client, OTHER).status_code == 403
     doc = client.get("/api/documents").json()[0]
@@ -450,3 +482,276 @@ def test_done_event_says_whether_the_model_refused_or_just_gave_no_citation(
     assert final(client.post("/api/chat", json=ask)) == (
         "done", {"grounded": False, "cited": [], "refused": False}
     )
+
+
+def test_migration_004_renames_public_to_samples_and_records_sizes(client):
+    """Starts from a database as phase 2 left it, then applies the real migrations."""
+    from app.db import MIGRATIONS, apply_migrations
+
+    url = get_settings().database_url
+    admin = url.rsplit("/", 1)[0] + "/postgres"
+    target = url.rsplit("/", 1)[0] + "/lexio_migration"
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("DROP DATABASE IF EXISTS lexio_migration WITH (FORCE)")
+        conn.execute("CREATE DATABASE lexio_migration")
+    with psycopg.connect(target, autocommit=True) as conn:
+        conn.execute("CREATE TABLE schema_migrations (name text PRIMARY KEY)")
+        for path in sorted(MIGRATIONS.glob("00[1-3]_*.sql")):
+            conn.execute(path.read_text(encoding="utf-8"))
+            conn.execute("INSERT INTO schema_migrations VALUES (%s)", (path.name,))
+        vec = "[" + ",".join(["0"] * 768) + "]"
+        for sha, owner, data in (("a", "public", b"%PDF-12345"), ("b", "public", None)):
+            doc = conn.execute(
+                "INSERT INTO documents (owner_id, filename, sha256, page_count) "
+                "VALUES (%s, %s, %s, 1) RETURNING id", (owner, sha + ".pdf", sha),
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO chunks (document_id, chunk_index, page, content, embedding) "
+                "VALUES (%s, 0, 1, 'x', %s)", (doc, vec),
+            )
+            if data:
+                conn.execute("INSERT INTO document_files VALUES (%s, %s)", (doc, data))
+
+    assert apply_migrations(target) == ["004_owners.sql"]
+    with psycopg.connect(target) as conn:
+        rows = conn.execute("SELECT owner_id, size_bytes FROM documents ORDER BY sha256").fetchall()
+        assert rows == [("samples", 10), ("samples", 0)]  # no data moved; size only where known
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 2
+        with pytest.raises(psycopg.errors.NotNullViolation):  # no silent default owner any more
+            conn.execute(
+                "INSERT INTO documents (filename, sha256, page_count) VALUES ('c', 'c', 1)"
+            )
+
+
+def test_private_pdfs_are_never_cached_but_samples_are(client, clean):
+    sample = _seed_sample()
+    mine = upload(client, OTHER).json()["id"]
+    assert "max-age" in client.get(f"/api/documents/{sample.document_id}/file").headers[
+        "cache-control"
+    ]
+    assert client.get(f"/api/documents/{mine}/file").headers["cache-control"] == (
+        "private, no-store"
+    )
+
+
+def test_reuploading_a_pdf_stored_before_files_were_kept_fixes_its_size(client, clean):
+    doc = upload(client).json()["id"]
+    with psycopg.connect(get_settings().database_url, autocommit=True) as conn:
+        conn.execute("DELETE FROM document_files")
+        conn.execute("UPDATE documents SET size_bytes = 0")
+    assert upload(client).json()["id"] == doc
+    with psycopg.connect(get_settings().database_url) as conn:
+        size = conn.execute("SELECT size_bytes FROM documents WHERE id = %s", (doc,)).fetchone()
+    assert size == (SAMPLE.stat().st_size,)
+
+
+# ---- sign-in and per-user documents (app/auth.py) -----------------------------------------
+
+
+@pytest.fixture
+def clean(client, limits):
+    limits()  # empty documents and counters, restored afterwards
+    return client
+
+
+def test_anonymous_cannot_upload_or_delete_and_sees_only_samples(anon, clean):
+    assert upload(anon).status_code == 401
+    assert anon.delete(f"/api/documents/{uuid4()}").status_code == 401
+    assert anon.delete("/api/me").status_code == 401
+    assert anon.get("/api/documents").json() == []
+    body = anon.get("/api/limits").json()
+    assert body["signed_in"] is False and body["uploads_enabled"] is False
+    assert ask(anon).status_code == 200  # may still ask questions
+
+
+def test_user_cannot_list_read_chat_over_or_delete_another_users_documents(client, bob, clean):
+    mine = upload(client).json()["id"]
+    assert [d["id"] for d in client.get("/api/documents").json()] == [mine]
+    assert bob.get("/api/documents").json() == []
+    assert bob.get(f"/api/documents/{mine}/file").status_code == 404
+    assert bob.delete(f"/api/documents/{mine}").status_code == 404  # 404, not 403: not revealed
+    question = "Does everyone have the right to education?"
+    scoped = bob.post("/api/chat", json={"question": question, "document_ids": [mine]})
+    assert scoped.status_code == 404
+    events = parse_sse(bob.post("/api/chat", json={"question": question}).text)
+    assert events[-1][1]["refused"] is True  # unscoped: bob's search never touches alice's chunks
+    assert client.get(f"/api/documents/{mine}/file").status_code == 200  # still there
+
+
+def test_same_pdf_uploaded_by_two_users_is_two_private_documents(client, bob, clean):
+    a, b = upload(client).json(), upload(bob).json()
+    assert a["id"] != b["id"] and not a["duplicate"] and not b["duplicate"]
+
+
+def _seed_sample(path=SAMPLE):
+    """What `python -m evals.seed` does for the shared sample set, without the embedding API."""
+    async def run():
+        pool = await open_pool(get_settings().database_url)
+        try:
+            from app.ingest import ingest_pdf
+            return await ingest_pdf(
+                pool, main.app.state.embedder, owner_id=auth.SAMPLES, filename=path.name,
+                data=path.read_bytes(), chunk_chars=1200, overlap=150,
+            )
+        finally:
+            await pool.close()
+
+    return asyncio.run(run())
+
+
+def test_samples_are_visible_to_all_searchable_and_undeletable(client, anon, clean):
+    sample = _seed_sample()
+    listed = anon.get("/api/documents").json()
+    assert [d["id"] for d in listed] == [str(sample.document_id)] and listed[0]["sample"] is True
+    assert anon.get(f"/api/documents/{sample.document_id}/file").status_code == 200
+    events = parse_sse(
+        anon.post("/api/chat", json={"question": "Does everyone have the right to education?"}).text
+    )
+    assert events[-1][1]["grounded"] is True, events
+    assert client.delete(f"/api/documents/{sample.document_id}").status_code == 403
+    assert len(anon.get("/api/documents").json()) == 1
+
+
+def test_uploading_a_sample_reuses_it_and_costs_nothing(client, limits, swap_state):
+    limits(visitor_upload_limit=1, embed_daily_limit=100, embed_query_reserve=10)
+    sample = _seed_sample()
+    swap_state("embedder", DownEmbedder())  # any attempt to embed would fail
+    r = upload(client)
+    assert r.status_code == 201
+    assert r.json() == {
+        "id": str(sample.document_id), "filename": SAMPLE.name, "pages": sample.page_count,
+        "chunks": sample.chunk_count, "duplicate": True, "sample": True,
+    }
+    assert used(client, "uploads") == 0
+    assert client.get("/api/limits").json()["documents"]["used"] == 0  # nothing stored for them
+
+
+def test_per_user_document_and_storage_caps(client, bob, limits):
+    limits(user_max_documents=1)
+    assert upload(client).status_code == 201
+    r = upload(client, OTHER)
+    assert r.status_code == 403 and "1 documents" in r.json()["detail"]
+    assert upload(bob, OTHER).status_code == 201  # caps are per user
+    assert client.delete(f"/api/documents/{upload(client).json()['id']}").status_code == 204
+    assert upload(client, OTHER).status_code == 201
+
+    limits(user_max_documents=10, user_max_mb=0)
+    assert upload(client, SAMPLE.parent / "crc.pdf").status_code == 403
+    body = client.get("/api/limits").json()
+    assert body["documents"] == {"used": 1, "limit": 10} and body["storage_mb"]["limit"] == 0
+
+
+def test_per_user_limits_follow_the_user_not_the_ip(client, bob, limits):
+    limits(visitor_question_limit=1)
+    assert ask(client).status_code == 200 and ask(client).status_code == 429
+    assert ask(bob).status_code == 200  # same IP, different user
+
+
+def test_delete_me_removes_everything_and_leaves_others_alone(client, bob, clean):
+    mine, theirs = upload(client).json()["id"], upload(bob, OTHER).json()["id"]
+    assert client.delete("/api/me").status_code == 204
+    assert client.get("/api/documents").json() == []
+    assert client.get(f"/api/documents/{mine}/file").status_code == 404
+    with psycopg.connect(get_settings().database_url) as conn:
+        left = conn.execute(
+            "SELECT (SELECT count(*) FROM documents WHERE owner_id = 'dev:alice'),"
+            " (SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.document_id"
+            "  WHERE d.owner_id = 'dev:alice'),"
+            " (SELECT count(*) FROM document_files WHERE document_id = %s)",
+            (mine,),
+        ).fetchone()
+        total = conn.execute("SELECT count(*) FROM document_files").fetchone()[0]
+    assert left == (0, 0, 0) and total == 1
+    assert [d["id"] for d in bob.get("/api/documents").json()] == [theirs]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": "Bearer not.a.token"},
+        {"Authorization": "Basic abc"},
+        {"Authorization": "Bearer"},
+        bearer(exp=int(time.time()) - 60),  # expired
+        bearer(aud="somebody-else"),
+        bearer(iss="somebody-else"),
+        bearer(sub=None),
+        bearer(exp=None),
+        bearer("google:123", _key="x" * 40),  # signed with another key
+        bearer("someone"),  # not a user id we issue
+        bearer("dev:../etc"),
+    ],
+    ids=["garbage", "scheme", "empty", "expired", "audience", "issuer", "no-sub", "no-exp",
+         "forged", "bad-sub", "bad-chars"],
+)
+def test_bad_tokens_get_401_not_anonymous_access(anon, headers):
+    assert anon.get("/api/documents", headers=headers).status_code == 401
+    assert anon.post("/api/chat", json={"question": "hello?"}, headers=headers).status_code == 401
+
+
+def test_unsigned_and_wrong_algorithm_tokens_are_refused(anon):
+    claims = {"sub": "google:1", "iss": "lexio-web", "aud": "lexio-api", "exp": time.time() + 99}
+    unsigned = jwt.encode(claims, None, algorithm="none")
+    hs512 = jwt.encode(claims, get_settings().api_token_secret + "x" * 40, algorithm="HS512")
+    for t in (unsigned, hs512):
+        headers = {"Authorization": f"Bearer {t}"}
+        assert anon.get("/api/documents", headers=headers).status_code == 401
+
+
+def test_google_users_work_and_dev_users_need_the_switch(anon, limits):
+    assert anon.get("/api/documents", headers=bearer("google:1234567890")).status_code == 200
+    limits(allow_dev_users=False)
+    assert anon.get("/api/documents", headers=bearer("dev:alice")).status_code == 401
+    assert anon.get("/api/documents", headers=bearer("google:1234567890")).status_code == 200
+
+
+def test_signing_in_is_off_without_a_secret(anon, limits):
+    limits(api_token_secret="")
+    assert anon.get("/api/documents", headers=bearer("google:1", _key="x" * 40)).status_code == 401
+    assert anon.get("/api/documents").status_code == 200  # anonymous still works
+
+
+FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
+MINT = (
+    'import { mintApiToken } from "./lib/apitoken.ts";'
+    "const e = process.env;"
+    "console.log(JSON.stringify(await mintApiToken(e.UID, "
+    "{ secret: e.SECRET, issuer: e.ISS, audience: e.AUD })));"
+)
+
+
+def mint_in_frontend(uid="google:104857293746501928374", **override):
+    """A token made by the frontend's own minting code (lib/apitoken.ts), run with Node."""
+    env = {**os.environ, "UID": uid, "SECRET": get_settings().api_token_secret,
+           "ISS": "lexio-web", "AUD": "lexio-api", **override}
+    out = subprocess.run(
+        [shutil.which("node"), "--experimental-strip-types", "--input-type=module", "-e", MINT],
+        cwd=FRONTEND, env=env, capture_output=True, text=True, timeout=60, check=True,
+    )
+    return json.loads(out.stdout)["token"]
+
+
+@pytest.mark.skipif(
+    not shutil.which("node") or not (FRONTEND / "node_modules" / "jose").exists(),
+    reason="needs Node and `npm install` in frontend/",
+)
+def test_a_token_minted_by_the_frontend_is_what_the_backend_accepts(anon):
+    good = {"Authorization": f"Bearer {mint_in_frontend()}"}
+    assert anon.get("/api/limits", headers=good).json()["signed_in"] is True
+    assert anon.get("/api/documents", headers=good).status_code == 200
+
+    for wrong in ({"AUD": "somebody-else"}, {"ISS": "somebody-else"}, {"SECRET": "x" * 40}):
+        bad = {"Authorization": f"Bearer {mint_in_frontend(**wrong)}"}
+        assert anon.get("/api/documents", headers=bad).status_code == 401
+
+
+def test_cors_allows_the_authorization_header(anon):
+    r = anon.options(
+        "/api/documents",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert r.status_code == 200
+    assert "authorization" in r.headers["access-control-allow-headers"].lower()

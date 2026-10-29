@@ -45,15 +45,30 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    # Free-tier guards (app/budget.py). DEMO_MODE=true is the public-demo preset: the shared
-    # sample documents are read-only and questions are capped per visitor and per day. Each
-    # setting below can still be set on its own; a value of 0 turns that limit off.
+    # Sign-in (app/auth.py). The Next.js app mints a short-lived HS256 token for the signed-in
+    # user and signs it with this secret, so both sides must share it. Empty: every token is
+    # refused and the API is anonymous-only (read-only on the sample documents).
+    api_token_secret: str = ""
+    auth_issuer: str = "lexio-web"
+    auth_audience: str = "lexio-api"
+    # Accept the frontend's development-only test user ("dev:..."). Never switch this on in
+    # production: the frontend only offers that login in development builds.
+    allow_dev_users: bool = False
+    # Per-user storage caps. PDFs live in Postgres, and Neon's free tier is small.
+    user_max_documents: int = 10
+    user_max_mb: int = 50
+
+    # Free-tier guards (app/budget.py). DEMO_MODE=true is the public-demo preset: questions,
+    # uploads and document length are capped (per user, or per IP for anonymous visitors, and
+    # per day for everyone). Each setting below can still be set on its own; a value of 0 turns
+    # that limit off.
     demo_mode: bool = False
-    uploads_enabled: bool | None = None  # default: on, except in demo mode
+    # Kill switch for uploads and deletes by signed-in users. Anonymous visitors never have them.
+    uploads_enabled: bool = True
     # Groq allows 200k tokens a day and an answer costs about 3k, so ~60 answers a day in all.
     question_daily_limit: int | None = None  # demo preset: 60
     visitor_question_limit: int | None = None  # demo preset: 10
-    visitor_upload_limit: int | None = None  # demo preset: 2 (only matters if uploads are on)
+    visitor_upload_limit: int | None = None  # demo preset: 2
     max_upload_chunks: int | None = None  # demo preset: 150 (one chunk = one Gemini request)
     # Gemini's free tier counts one request per chunk, 1000 a day. `embed_query_reserve` of them
     # are kept back so uploads can never leave the app unable to embed a question.
@@ -68,8 +83,6 @@ class Settings(BaseSettings):
         if self.min_similarity is None:
             self.min_similarity = THRESHOLDS[self.embedding_provider]
         demo = self.demo_mode
-        if self.uploads_enabled is None:
-            self.uploads_enabled = not demo
         if self.embed_daily_limit is None and self.embedding_provider == "gemini":
             self.embed_daily_limit = 1000
         for name, preset in zip(LIMITS, (60, 10, 2, 150), strict=True):
@@ -78,6 +91,8 @@ class Settings(BaseSettings):
         for name in LIMITS + ("embed_daily_limit",):
             if getattr(self, name) == 0:
                 setattr(self, name, None)  # an explicit 0 means "off", the same as unset
+        if self.api_token_secret and len(self.api_token_secret.encode()) < 32:
+            raise ValueError("API_TOKEN_SECRET must be at least 32 bytes (openssl rand -base64 32)")
         limit = self.embed_daily_limit
         if limit and limit <= self.embed_query_reserve:  # a small limit still leaves room to upload
             self.embed_query_reserve = limit // 5

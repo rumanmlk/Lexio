@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  deleteAccount,
   deleteDocument,
   formatWait,
   getLimits,
@@ -14,6 +15,7 @@ import {
   type Source,
   type Turn,
 } from "@/lib/api";
+import { signIn, signOut } from "next-auth/react";
 import { readEvents } from "@/lib/sse";
 import { Message, type ChatMessage } from "@/components/Message";
 import { PdfPane, type View } from "@/components/PdfPane";
@@ -141,7 +143,8 @@ export default function Home() {
     try {
       const r = await uploadDocument(file);
       await refresh();
-      if (r.duplicate) setBanner(`${r.filename} is already in your library.`);
+      if (r.sample) setBanner(`${r.filename} is one of the sample documents, so it is ready to use as it is.`);
+      else if (r.duplicate) setBanner(`${r.filename} is already in your library.`);
     } catch (e) {
       setBanner((e as Error).message);
       refreshLimits();
@@ -162,6 +165,19 @@ export default function Home() {
     }
   }
 
+  async function onDeleteAccount() {
+    const mine = docs.filter((d) => !d.sample).length;
+    const what = `${mine} document${mine === 1 ? "" : "s"}`;
+    if (!confirm(`Delete your account data? This erases your ${what} and cannot be undone.`)) return;
+    try {
+      await deleteAccount();
+      await signOut({ redirect: false });
+      location.reload();
+    } catch (e) {
+      setBanner((e as Error).message);
+    }
+  }
+
   const open = useCallback(
     (s: Source) => setView({ documentId: s.document_id, filename: s.filename, page: s.page }),
     [],
@@ -175,6 +191,36 @@ export default function Home() {
       <nav className="side">
         <h1>Lexio</h1>
         <p className="tag">Ask legal PDFs, get answers with page citations.</p>
+
+        <div className="account">
+          {limits && !limits.signed_in && (
+            <>
+              <button className="primary" onClick={() => signIn("google")}>
+                Sign in with Google
+              </button>
+              {process.env.NODE_ENV === "development" && (
+                <button className="link" onClick={() => signIn("dev", { redirect: false }).then(() => location.reload())}>
+                  dev login
+                </button>
+              )}
+              <p className="muted small">
+                Without an account you can ask questions about the sample documents. Sign in to upload your own PDFs;
+                only you can see them.
+              </p>
+            </>
+          )}
+          {limits?.signed_in && (
+            <p className="muted small">
+              Signed in.{" "}
+              <button className="link" onClick={() => signOut({ redirect: false }).then(() => location.reload())}>
+                sign out
+              </button>{" "}
+              <button className="link danger" onClick={onDeleteAccount}>
+                delete my data
+              </button>
+            </p>
+          )}
+        </div>
 
         <h2>Documents</h2>
         {noDocs && !banner && <p className="muted">No documents yet.</p>}
@@ -190,12 +236,13 @@ export default function Home() {
                 <span className="name" title={d.filename}>
                   {d.filename}
                 </span>
+                {d.sample && <span className="badge">sample</span>}
               </label>
               <span className="meta">{d.pages} pages</span>
               <button className="link" onClick={() => setView({ documentId: d.id, filename: d.filename, page: 1 })}>
                 view
               </button>
-              {limits?.uploads_enabled && (
+              {limits?.uploads_enabled && !d.sample && (
                 <button className="link danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.filename}`}>
                   delete
                 </button>
@@ -221,12 +268,17 @@ export default function Home() {
           />
           {uploading ? "Reading the PDF…" : "Upload a PDF"}
         </label>
-        {limits && uploadOff && <p className="muted small">This demo is read-only: the sample documents are already loaded.</p>}
+        {limits && uploadOff && (
+          <p className="muted small">
+            {limits.signed_in ? "Uploads are turned off on this server." : "Sign in to upload your own PDFs."}
+          </p>
+        )}
         {limits?.uploads_enabled && (
           <p className="muted small">
             PDF up to {limits.max_upload_mb} MB
             {limits.max_upload_chunks ? `, about ${limits.max_upload_chunks} sections` : ""}.
             {Number.isFinite(uploadsLeft) && ` ${uploadsLeft} upload${uploadsLeft === 1 ? "" : "s"} left today.`}
+            {` You are using ${limits.documents.used} of ${limits.documents.limit} documents and ${limits.storage_mb.used} of ${limits.storage_mb.limit} MB.`}
           </p>
         )}
         {banner && (

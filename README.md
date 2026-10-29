@@ -87,16 +87,26 @@ The Gemini retrieval eval above was produced with `uv run python -m evals.run --
 - The app stops retrying when a provider reports a daily limit and tells the user when it resets, instead of failing slowly.
 - Paid Gemini embeddings cost $0.20 per million input tokens ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). By my arithmetic (about 800 chunks of roughly 300 tokens) the whole sample set is around five cents, so the paid tier is the cheap way out if the free quota ever becomes the constraint.
 
+### Accounts and per-user documents
+
+Sign-in is Google only (one provider, so one person cannot end up with two accounts), through Auth.js in the Next.js app. Anonymous visitors can read the sample documents and ask questions about them, but cannot upload or delete. A signed-in user also gets private documents that nobody else can list, read, search or delete: another user's document id returns `404`, as if it did not exist.
+
+- **Token flow:** Auth.js keeps its session in an encrypted cookie that only the Next.js app can read. A small route (`/token`) trades that session for a 5-minute HS256 token (issuer, audience, expiry, `sub`) signed with `API_TOKEN_SECRET`; the browser sends it as `Authorization: Bearer`, and FastAPI verifies it with PyJWT (algorithm pinned, `sub`/`exp`/`iss`/`aud` required). A bad or expired token is a `401`, never a silent fallback to anonymous.
+- **What is stored:** the user id (`google:<sub>`) on the user's documents, and nothing else. No email, name or user table. `DELETE /api/me` erases the user's documents, chunks and PDF files. The daily counters are keyed by a salted hash and are not erased on purpose: otherwise deleting and re-creating an account would reset the day's limits. They expire after 7 days.
+- **Samples:** the shared documents belong to the owner `samples`. They cannot be deleted through the API (`403`), and uploading a PDF that is byte-identical to one of them just returns the sample, with no embedding and no copy.
+- **Caps:** `USER_MAX_DOCUMENTS` (10) and `USER_MAX_MB` (50) per user, because PDFs live in Postgres and Neon's free tier is small. The global daily caps below still apply to everyone together, since extra Google accounts can bypass any per-user limit. The caps are checked before the upload is stored, so two simultaneous uploads can overshoot one slightly.
+- **Dev login:** `next dev` offers a fixed `dev:local` user so the app can be run and tested without Google. It exists only in development builds, and the backend accepts `dev:` users only with `ALLOW_DEV_USERS=true` (leave it off in production).
+- **Set up:** put the same `API_TOKEN_SECRET` (32+ characters) in the backend's `.env` and the frontend's `.env.local`, plus `AUTH_SECRET`, `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in the frontend ([`frontend/.env.example`](frontend/.env.example)). The Google OAuth client needs the redirect URI `http://localhost:3000/api/auth/callback/google`. Auth.js v5 is still tagged beta on npm; this project pins `5.0.0-beta.32`.
+
 ### Running a public demo inside those limits
 
-`DEMO_MODE=true` switches on a preset that keeps a shared deployment inside the free tiers. Every number can be overridden on its own (`0` turns a limit off):
+`DEMO_MODE=true` switches on a preset that keeps a shared deployment inside the free tiers (`UPLOADS_ENABLED=false` still switches uploads and deletes off for everyone). Every number can be overridden on its own (`0` turns a limit off):
 
 | Setting | Demo preset | What it does |
 |---|---|---|
-| `UPLOADS_ENABLED` | `false` | The shared workspace is read-only: upload **and delete** return 403, so visitors can neither burn embedding quota nor delete the samples |
-| `QUESTION_DAILY_LIMIT` | 60 | Answers per day across all visitors (Groq's token budget) |
-| `VISITOR_QUESTION_LIMIT` | 10 | Answers per visitor per day |
-| `VISITOR_UPLOAD_LIMIT` | 2 | New documents per visitor per day, if uploads are turned on |
+| `QUESTION_DAILY_LIMIT` | 60 | Answers per day across everyone (Groq's token budget) |
+| `VISITOR_QUESTION_LIMIT` | 10 | Answers per user per day (per hashed IP for anonymous visitors) |
+| `VISITOR_UPLOAD_LIMIT` | 2 | New documents per user per day |
 | `MAX_UPLOAD_CHUNKS` | 150 | Longest PDF accepted (one chunk is one Gemini request) |
 | `EMBED_DAILY_LIMIT` | 1000 (always, with Gemini) | Embedding requests per day; `EMBED_QUERY_RESERVE` (200) of them are kept back, so uploads can never leave the app unable to embed a question |
 
@@ -106,7 +116,7 @@ How it works:
 - A refused request returns **429** with a `Retry-After` header and a plain message ("…It resets in about 5 hours."). It is refused before any provider is called, so it costs nothing, and a request that fails at the provider gives its reservation back (a question whose answer fails before any text is sent does not count against the visitor's daily questions). Duplicate and unreadable PDFs are never charged.
 - If Gemini reports its daily quota gone, the counter is set to match, so later uploads are refused immediately instead of failing slowly.
 - `GET /api/limits` tells a client what the visitor has left, so a UI can disable controls instead of failing.
-- Visitors are told apart by a salted hash of their IP (the IP itself is never stored). Set `VISITOR_SALT`, and `TRUST_FORWARDED_FOR=true` only behind a proxy that sets `X-Forwarded-For` itself, as Vercel does; the last entry is used, so a client cannot choose its own identity by sending the header. Phase 3 replaces this with real accounts.
+- Visitors are told apart by a salted hash of their IP (the IP itself is never stored). Set `VISITOR_SALT`, and `TRUST_FORWARDED_FOR=true` only behind a proxy that sets `X-Forwarded-For` itself, as Vercel does; the last entry is used, so a client cannot choose its own identity by sending the header. Anonymous visitors are counted this way; signed-in users are counted by a salted hash of their user id instead.
 - **Seeding the demo:** `uv run python -m evals.seed` loads the sample PDFs into `DATABASE_URL`. It reads vectors from the eval's embedding cache, so after the Gemini retrieval eval has run it needs no Gemini requests at all; anything missing is embedded once and cached. Reruns skip documents already present.
 
 What this does not cover: the counters see only traffic through this API (running the evals on the same Gemini project uses quota they cannot see; the provider's own error is the backstop, and the app then records it). The question cap is a proxy for Groq tokens, not a token meter.
@@ -117,7 +127,7 @@ Needs Docker and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 docker compose up -d db
-cp .env.example .env        # add GROQ_API_KEY and GEMINI_API_KEY
+cp .env.example .env        # add GROQ_API_KEY and GEMINI_API_KEY (and API_TOKEN_SECRET, see Accounts)
 cd backend
 uv sync --group dev
 uv run uvicorn app.main:app --reload
@@ -129,13 +139,13 @@ API docs at http://localhost:8000/docs. On Windows keep `--reload`: without it u
 
 ```bash
 cd frontend
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL, default http://localhost:8000
+cp .env.example .env.local   # API URL and the sign-in secrets; see Accounts
 npm install
 npm run dev                  # http://localhost:3000
 npm test                     # stream parser and citation tests
 ```
 
-Streaming chat over the SSE events, `[n]` citations that open the PDF at the cited page, a document filter, upload and delete, and the daily limits (remaining questions shown, controls disabled, `429` explained with the wait). To get sample documents into a local database: `cd backend && uv run python -m evals.seed --provider local`.
+Streaming chat over the SSE events, `[n]` citations that open the PDF at the cited page, a document filter, upload and delete, and the daily limits (remaining questions shown, controls disabled, `429` explained with the wait). Sign in with Google, or with the dev login under `npm run dev`. To get sample documents into a local database: `cd backend && uv run python -m evals.seed --provider local`.
 
 ```bash
 uv run pytest               # unit tests + end-to-end against local Postgres, no API keys needed
@@ -163,11 +173,12 @@ Sends each question through the same path as `/api/chat` with Groq and checks th
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/documents` | multipart PDF upload; deduplicated by SHA-256 |
-| `GET` | `/api/documents` | list |
+| `POST` | `/api/documents` | signed-in only: multipart PDF upload; deduplicated by SHA-256, and a PDF identical to a sample returns the sample |
+| `GET` | `/api/documents` | the samples plus the caller's own (`sample: true` marks the shared ones) |
 | `GET` | `/api/documents/{id}/file` | the original PDF, for the viewer |
-| `DELETE` | `/api/documents/{id}` | delete with its chunks |
-| `GET` | `/api/limits` | what this visitor may still do today (questions, uploads, reset time) |
+| `DELETE` | `/api/documents/{id}` | signed-in only: delete one of your documents with its chunks (`403` for a sample) |
+| `DELETE` | `/api/me` | signed-in only: erase all of your documents and files |
+| `GET` | `/api/limits` | what this visitor may still do today (questions, uploads, stored documents, reset time) |
 | `POST` | `/api/chat` | `{question, document_ids?, history?}`, answers as Server-Sent Events: `sources` (with the `query` actually searched), `token`…, `done` (`grounded`, `cited`, `refused`) or `error` |
 
 Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (see above); unreadable, password-protected or scanned (no text layer) PDFs return `422` with a reason; a rejected API key returns `502` and a rate limit or timeout returns `503`, after retries with backoff. If the LLM fails after streaming has started, the stream ends with an `error` event.
@@ -179,13 +190,14 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 - The eval set is small (73 answerable questions over five documents, only two of them contracts). Treat the numbers as a regression check, not proof of accuracy on real contracts.
 - Free-tier quotas (see above) limit uploads, evals and how many questions a public demo can answer per day. The budget guard keeps a deployment inside them; it does not raise them.
 - Prompt-injection defences (documents are fenced as untrusted data and the prompt says never to obey them) reduce the risk but cannot remove it.
-- No authentication yet (Phase 3): every client shares one workspace. Limits are per visitor (hashed IP), which people behind one shared address will share.
+- Anonymous limits count a hashed IP, which people behind one shared address share. Signed-in users are counted per account, but a determined person can make several Google accounts; only the global daily caps stop that.
+- The real Google sign-in is checked by hand, not in automated tests (it needs a Google OAuth client); the token, ownership and limit logic is tested against the dev login.
 
 ## Roadmap
 
 - [x] Phase 1: FastAPI + pgvector + hybrid retrieval + citations + eval harness
 - [x] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page (uses the browser's built-in PDF viewer)
-- [ ] Phase 3: auth, per-user documents, rate limiting
+- [x] Phase 3: Google sign-in, per-user documents, per-user limits
 - [ ] Phase 4: Vercel + Neon deployment, Langfuse tracing, CI evals
 
 Not legal advice. MIT licensed.

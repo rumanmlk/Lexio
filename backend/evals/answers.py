@@ -74,7 +74,7 @@ async def search(pool, embedder, s, query: str, owner: str = "eval"):
     from app import retrieval
 
     return await retrieval.retrieve(
-        pool, embedder, query, owner_id=owner, candidates=s.retrieve_candidates,
+        pool, embedder, query, owners=[owner], candidates=s.retrieve_candidates,
         top_k=s.retrieve_top_k, keyword_weight=s.keyword_weight,
     )
 

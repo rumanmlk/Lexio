@@ -53,7 +53,7 @@ async def main(provider: str, sweep: bool, reuse: bool) -> None:
         ranks, latencies = [], []
         for it in answerable:
             t = time.perf_counter()
-            res = await retrieve(pool, embedder, it["question"], owner_id="eval", mode=mode,
+            res = await retrieve(pool, embedder, it["question"], owners=["eval"], mode=mode,
                                  candidates=s.retrieve_candidates, top_k=max(KS),
                                  keyword_weight=weight)
             latencies.append(time.perf_counter() - t)
@@ -65,7 +65,7 @@ async def main(provider: str, sweep: bool, reuse: bool) -> None:
         rows.append((label, hit, mrr, statistics.median(latencies) * 1000))
 
     for it in unanswerable:
-        res = await retrieve(pool, embedder, it["question"], owner_id="eval", mode="hybrid",
+        res = await retrieve(pool, embedder, it["question"], owners=["eval"], mode="hybrid",
                              candidates=s.retrieve_candidates, top_k=max(KS))
         sims["unanswerable"].append((res.top_similarity, res.has_keyword_match))
 

@@ -179,7 +179,7 @@ def test_settings_presets_for_the_free_tier():
     assert dev.embed_daily_limit is None
 
     demo = Settings(embedding_provider="gemini", demo_mode=True, _env_file=None)
-    assert not demo.uploads_enabled and demo.embed_daily_limit == 1000
+    assert demo.uploads_enabled and demo.embed_daily_limit == 1000
     assert (demo.question_daily_limit, demo.visitor_question_limit) == (60, 10)
     assert (demo.visitor_upload_limit, demo.max_upload_chunks) == (2, 150)
 

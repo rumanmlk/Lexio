@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import io
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -93,6 +93,7 @@ class IngestResult:
     page_count: int
     chunk_count: int
     duplicate: bool
+    owner_id: str
 
 
 async def _store_file(conn, doc_id, data: bytes) -> None:
@@ -100,6 +101,8 @@ async def _store_file(conn, doc_id, data: bytes) -> None:
         "INSERT INTO document_files (document_id, data) VALUES (%s, %s) ON CONFLICT DO NOTHING",
         (doc_id, data),
     )
+    # Rows from before files were kept have size 0; the storage cap counts this column.
+    await conn.execute("UPDATE documents SET size_bytes = %s WHERE id = %s", (len(data), doc_id))
 
 
 async def ingest_pdf(
@@ -107,6 +110,7 @@ async def ingest_pdf(
     embedder: Embedder,
     *,
     owner_id: str,
+    reuse_from: Sequence[str] = (),
     filename: str,
     data: bytes,
     chunk_chars: int,
@@ -115,22 +119,26 @@ async def ingest_pdf(
 ) -> IngestResult:
     """`before_embed(n)` runs once the PDF is known to be new and readable, with the number of
     chunks about to be embedded (one API request each). Raising there aborts the ingest, which is
-    where a deployment enforces its free-tier budget without charging duplicates or bad files."""
+    where a deployment enforces its free-tier budget without charging duplicates or bad files.
+    A PDF already stored under `owner_id` or any owner in `reuse_from` (the shared samples, first)
+    is returned as it is, so nobody spends embedding quota or storage on a copy."""
     sha = hashlib.sha256(data).hexdigest()
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT d.id, d.filename, d.page_count, d.chunk_count, f.document_id IS NOT NULL "
+                "SELECT d.id, d.filename, d.page_count, d.chunk_count, f.document_id IS NOT NULL, "
+                "d.owner_id "
                 "FROM documents d LEFT JOIN document_files f ON f.document_id = d.id "
-                "WHERE d.owner_id = %s AND d.sha256 = %s",
-                (owner_id, sha),
+                "WHERE d.owner_id = ANY(%s) AND d.sha256 = %s "
+                "ORDER BY d.owner_id = %s LIMIT 1",
+                ([owner_id, *reuse_from], sha, owner_id),
             )
         ).fetchone()
     if row:
         if not row[4]:  # ingested before files were kept: fill it in once
             async with pool.connection() as conn:
                 await _store_file(conn, row[0], data)
-        return IngestResult(row[0], row[1], row[2], row[3], duplicate=True)
+        return IngestResult(row[0], row[1], row[2], row[3], duplicate=True, owner_id=row[5])
 
     pages = await asyncio.to_thread(extract_pages, data)  # CPU-bound; keep the event loop free
     chunks = chunk_pages(pages, chunk_chars, overlap)
@@ -147,9 +155,9 @@ async def ingest_pdf(
         doc_id = (
             await (
                 await conn.execute(
-                    "INSERT INTO documents (owner_id, filename, sha256, page_count, chunk_count) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                    (owner_id, filename, sha, len(pages), len(chunks)),
+                    "INSERT INTO documents (owner_id, filename, sha256, page_count, chunk_count, "
+                    "size_bytes) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (owner_id, filename, sha, len(pages), len(chunks), len(data)),
                 )
             ).fetchone()
         )[0]
@@ -163,4 +171,4 @@ async def ingest_pdf(
                 ],
             )
         await _store_file(conn, doc_id, data)
-    return IngestResult(doc_id, filename, len(pages), len(chunks), duplicate=False)
+    return IngestResult(doc_id, filename, len(pages), len(chunks), False, owner_id)

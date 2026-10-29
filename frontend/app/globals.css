@@ -119,3 +119,8 @@ h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color
 }
 
 .hint { margin: 0.6rem 0 0; font-size: 0.88rem; color: var(--muted); }
+
+.account { margin: 0.8rem 0 0.2rem; }
+.account .primary { display: block; width: 100%; padding: 0.55rem; border-radius: 8px; border: 1px solid var(--line); background: var(--accent); color: var(--accent-ink); cursor: pointer; font-size: 0.92rem; }
+.account .link { margin-right: 0.5rem; }
+.badge { flex: none; padding: 0 0.4rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 0.7rem; }
