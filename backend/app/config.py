@@ -1,7 +1,15 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# From the eval sweeps in evals/results/. gemini: on the first two documents answerable
+# questions scored >= 0.661 and out-of-scope ones <= 0.641, so 0.65 sat in the gap. That is
+# PROVISIONAL until the five-document Gemini sweep is run: the local model's gap closed on that
+# larger corpus (answerable >= 0.557, out-of-scope up to 0.641). local (bge) stays at the
+# conservative 0.5 (no false refusals). hash is the test embedder and has no calibration.
+THRESHOLDS = {"gemini": 0.65, "local": 0.5, "hash": 0.5}
 
 
 class Settings(BaseSettings):
@@ -22,15 +30,22 @@ class Settings(BaseSettings):
     chunk_overlap_chars: int = 150
     retrieve_candidates: int = 30
     retrieve_top_k: int = 6
-    # Weight of the keyword ranking in RRF (vector = 1.0). 0.25 gave the best recall in evals.
-    keyword_weight: float = 0.25
+    # Weight of the keyword ranking in RRF (vector = 1.0). With ts_rank, equal weights scored
+    # best on the 5-document local eval (MRR 0.794 vs 0.755 at 0.25). Re-check with Gemini.
+    keyword_weight: float = 1.0
     # Refuse when the best cosine similarity is below this. Similarity scales differ per
-    # embedding model: 0.5 is calibrated for bge-base-en-v1.5 only. Re-run
-    # `python -m evals.run --provider gemini --sweep` and set MIN_SIMILARITY for Gemini.
-    min_similarity: float = 0.5
+    # embedding model, so the default depends on the provider (see THRESHOLDS). Set
+    # MIN_SIMILARITY to override; re-run `python -m evals.run --provider <p> --sweep` to retune.
+    min_similarity: float | None = None
 
     max_upload_mb: int = 25
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    @model_validator(mode="after")
+    def _default_threshold(self):
+        if self.min_similarity is None:
+            self.min_similarity = THRESHOLDS[self.embedding_provider]
+        return self
 
 
 @lru_cache

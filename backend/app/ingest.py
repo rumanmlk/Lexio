@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import re
@@ -7,6 +8,7 @@ from uuid import UUID
 import numpy as np
 from psycopg_pool import AsyncConnectionPool
 from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 
 from app.embeddings import Embedder
 
@@ -18,8 +20,14 @@ class PageChunk:
 
 
 def extract_pages(data: bytes) -> list[str]:
-    reader = PdfReader(io.BytesIO(data))
-    return [(p.extract_text() or "") for p in reader.pages]
+    """Raises ValueError with a user-facing message for unreadable or locked PDFs."""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise ValueError("This PDF is password-protected. Remove the password and retry.")
+        return [(p.extract_text() or "") for p in reader.pages]
+    except PyPdfError as exc:
+        raise ValueError("This PDF is damaged or unreadable.") from exc
 
 
 def normalize(text: str) -> str:
@@ -108,10 +116,12 @@ async def ingest_pdf(
     if row:
         return IngestResult(row[0], row[1], row[2], row[3], duplicate=True)
 
-    pages = extract_pages(data)
+    pages = await asyncio.to_thread(extract_pages, data)  # CPU-bound; keep the event loop free
     chunks = chunk_pages(pages, chunk_chars, overlap)
     if not chunks:
-        raise ValueError("No extractable text. Scanned PDFs need OCR, which is not supported yet.")
+        raise ValueError(
+            "No text found in this PDF. It is probably a scan; OCR is not supported yet."
+        )
 
     vectors = await embedder.embed_documents([c.content for c in chunks])
 

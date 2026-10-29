@@ -7,6 +7,7 @@ import httpx
 import numpy as np
 
 from app.config import Settings
+from app.errors import ProviderError, RetryPolicy, from_exception, retry_delay
 
 
 class Embedder(Protocol):
@@ -20,10 +21,11 @@ class GeminiEmbedder:
     BASE = "https://generativelanguage.googleapis.com/v1beta"
     BATCH = 50
 
-    def __init__(self, api_key: str, model: str, dim: int):
+    def __init__(self, api_key: str, model: str, dim: int, policy: RetryPolicy | None = None):
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")
         self.model, self.dim = model, dim
+        self.policy = policy or RetryPolicy(attempts=5, max_wait=60.0)
         self.client = httpx.AsyncClient(
             base_url=self.BASE,
             headers={"x-goog-api-key": api_key},
@@ -39,14 +41,22 @@ class GeminiEmbedder:
 
     async def _batch(self, texts: list[str]) -> list[list[float]]:
         body = {"requests": [self._item(t) for t in texts]}
-        for attempt in range(5):
-            resp = await self.client.post(f"/models/{self.model}:batchEmbedContents", json=body)
-            if resp.status_code == 429 and attempt < 4:
-                await asyncio.sleep(2**attempt)
-                continue
-            resp.raise_for_status()
-            return [e["values"] for e in resp.json()["embeddings"]]
-        raise RuntimeError("unreachable")
+        for attempt in range(self.policy.attempts):
+            try:
+                resp = await self.client.post(
+                    f"/models/{self.model}:batchEmbedContents", json=body
+                )
+                resp.raise_for_status()
+                return [e["values"] for e in resp.json()["embeddings"]]
+            except (KeyError, ValueError) as exc:  # 200 with an unexpected body
+                raise ProviderError(
+                    502, "Gemini embeddings returned an unexpected response."
+                ) from exc
+            except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+                delay = retry_delay(exc, attempt, self.policy)
+                if delay is None or attempt == self.policy.attempts - 1:
+                    raise from_exception("Gemini embeddings", exc) from exc
+                await asyncio.sleep(delay)
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
@@ -98,9 +108,9 @@ class HashEmbedder:
         return self._vec(text)
 
 
-def build_embedder(s: Settings) -> Embedder:
+def build_embedder(s: Settings, policy: RetryPolicy | None = None) -> Embedder:
     if s.embedding_provider == "gemini":
-        return GeminiEmbedder(s.gemini_api_key, s.gemini_embedding_model, s.embedding_dim)
+        return GeminiEmbedder(s.gemini_api_key, s.gemini_embedding_model, s.embedding_dim, policy)
     if s.embedding_provider == "local":
         return LocalEmbedder(s.local_embedding_model)
     return HashEmbedder(s.embedding_dim)

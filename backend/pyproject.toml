@@ -22,13 +22,18 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "respx>=0.21",
+    "httpx2>=2.16",  # what starlette.testclient now wants; the app itself still uses httpx
 ]
 local-embeddings = [
     "fastembed>=0.4",
 ]
 
+[tool.uv]
+link-mode = "copy"  # uv's cache and this repo are on different drives, so hardlinks can't work
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = ["db: needs the local Postgres from docker-compose"]
 

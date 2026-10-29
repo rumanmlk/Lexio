@@ -61,9 +61,12 @@ SELECT c.id, 1 - (c.embedding <=> %(vec)s) AS sim {_SCOPE}
 ORDER BY c.embedding <=> %(vec)s LIMIT %(n)s
 """
 
+# ts_rank (term frequency), not ts_rank_cd (cover density): with OR-ed terms, cover density
+# rewards terms sitting close together and ranked worse than vectors on the 5-document eval
+# (keyword-only MRR 0.54 vs 0.79).
 _KEYWORD_SCOPE = _SCOPE.replace("WHERE", ", to_tsquery('english', %(q)s) q WHERE")
 _KEYWORD_SQL = f"""
-SELECT c.id, ts_rank_cd(c.tsv, q) AS rank {_KEYWORD_SCOPE}
+SELECT c.id, ts_rank(c.tsv, q) AS rank {_KEYWORD_SCOPE}
 AND c.tsv @@ q ORDER BY rank DESC LIMIT %(n)s
 """
 

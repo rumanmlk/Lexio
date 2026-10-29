@@ -35,3 +35,6 @@ CLAUDE.md
 scratch/
 notes/
 *.local.md
+
+# eval caches
+backend/evals/.cache/

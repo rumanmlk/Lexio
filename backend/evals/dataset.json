@@ -172,7 +172,7 @@
  {
   "id": "a18",
   "doc": "universal_declaration_of_human_rights.pdf",
-  "question": "May I practise my religion in public?",
+  "question": "Under the Universal Declaration, may I practise my religion in public?",
   "gold_pages": [
    5
   ],
@@ -418,5 +418,441 @@
   "id": "u08",
   "question": "What is the speed limit on motorways?",
   "answerable": false
+ },
+ {
+  "id": "n01",
+  "question": "What is the minimum wage set by the Declaration?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n02",
+  "question": "How many days of paid holiday does the Declaration guarantee each year?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n03",
+  "question": "What is the legal age of marriage under the Declaration?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n04",
+  "question": "What penalty does the Declaration prescribe for a government that violates these rights?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n05",
+  "question": "What is the minimum age for admission to employment under the Convention?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n06",
+  "question": "How much compensation must a state pay a child whose rights were violated?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n07",
+  "question": "How many days may a child be held in pre-trial detention under the Convention?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "a39",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "In the Mutual NDA, may the Receiving Party keep confidential information in its backups?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "inaccordancewithitsstandardbackuporrecordretentionpolicies",
+  "answerable": true
+ },
+ {
+  "id": "a40",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "Can a party assign the Mutual NDA without the other party's consent?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "inconnectionwithamerger,reorganization,acquisition",
+  "answerable": true
+ },
+ {
+  "id": "a41",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "What standard of care must the Receiving Party use to protect confidential information under the Mutual NDA?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "nolessthanareasonablestandardofcare",
+  "answerable": true
+ },
+ {
+  "id": "a42",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "How can either party terminate the Mutual NDA?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "terminatethismndaforanyornoreasonuponwrittennotice",
+  "answerable": true
+ },
+ {
+  "id": "a43",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "Which information is excluded from the Mutual NDA's confidentiality obligations because it is already public?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "becomespubliclyavailablethroughnofaultofthereceivingparty",
+  "answerable": true
+ },
+ {
+  "id": "a44",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "What must the Receiving Party do under the Mutual NDA before disclosing information because a court order requires it?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "reasonableadvancenoticeoftherequireddisclosure",
+  "answerable": true
+ },
+ {
+  "id": "a45",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "Under the Mutual NDA, what can the Disclosing Party seek if the agreement is breached?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "entitledtoseekappropriateequitablerelief",
+  "answerable": true
+ },
+ {
+  "id": "a46",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "How must notices be sent under the Mutual NDA?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "mustbesentinwritingtotheemailorpostaladdresses",
+  "answerable": true
+ },
+ {
+  "id": "a47",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "How long are trade secrets protected under the Mutual NDA's cover page?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "untilconfidentialinformationisnolongerconsideredatradesecret",
+  "answerable": true
+ },
+ {
+  "id": "a48",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "question": "Does the Mutual NDA give the Receiving Party a licence to the Disclosing Party's intellectual property?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "grantsnolicenseundersuchrights",
+  "answerable": true
+ },
+ {
+  "id": "a49",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Under the GDPR, how soon must a controller notify the supervisory authority of a personal data breach?",
+  "gold_pages": [
+   17,
+   52
+  ],
+  "evidence": "notlaterthan72hoursafterhavingbecomeawareofit",
+  "answerable": true
+ },
+ {
+  "id": "a50",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "What is the maximum administrative fine for the most serious infringements under the GDPR?",
+  "gold_pages": [
+   83
+  ],
+  "evidence": "upto20000000eur",
+  "answerable": true
+ },
+ {
+  "id": "a51",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "What is the maximum administrative fine for the less serious infringements under the GDPR, such as obligations of the controller and processor?",
+  "gold_pages": [
+   82
+  ],
+  "evidence": "upto10000000eur",
+  "answerable": true
+ },
+ {
+  "id": "a52",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Under the GDPR, within what period must a controller respond to a data subject's request?",
+  "gold_pages": [
+   40
+  ],
+  "evidence": "inanyeventwithinonemonthofreceiptoftherequest",
+  "answerable": true
+ },
+ {
+  "id": "a53",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Which organisations are exempt from the GDPR's record-keeping duty, unless their processing is risky?",
+  "gold_pages": [
+   51
+  ],
+  "evidence": "employingfewerthan250persons",
+  "answerable": true
+ },
+ {
+  "id": "a54",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Under the GDPR, from what age can a child give valid consent to information society services?",
+  "gold_pages": [
+   37
+  ],
+  "evidence": "thechildisatleast16yearsold",
+  "answerable": true
+ },
+ {
+  "id": "a55",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "What format must a controller use when providing data under the GDPR's right to data portability?",
+  "gold_pages": [
+   45
+  ],
+  "evidence": "structured,commonlyusedandmachine-readableformat",
+  "answerable": true
+ },
+ {
+  "id": "a56",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "How easy must it be to withdraw consent under the GDPR?",
+  "gold_pages": [
+   37
+  ],
+  "evidence": "shallbeaseasytowithdrawastogiveconsent",
+  "answerable": true
+ },
+ {
+  "id": "a57",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "From what date does the GDPR apply?",
+  "gold_pages": [
+   87
+  ],
+  "evidence": "itshallapplyfrom25may2018",
+  "answerable": true
+ },
+ {
+  "id": "a58",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Under the GDPR, what must a controller outside the EU do when the Regulation applies to it?",
+  "gold_pages": [
+   48
+  ],
+  "evidence": "shalldesignateinwritingarepresentativeintheunion",
+  "answerable": true
+ },
+ {
+  "id": "a59",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "When must a controller and processor designate a data protection officer under the GDPR?",
+  "gold_pages": [
+   55
+  ],
+  "evidence": "designateadataprotectionofficerinanycasewhere",
+  "answerable": true
+ },
+ {
+  "id": "a60",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "Does the GDPR apply to purely personal or household activity?",
+  "gold_pages": [
+   3,
+   32
+  ],
+  "evidence": "inthecourseofapurelypersonalorhouseholdactivity",
+  "answerable": true
+ },
+ {
+  "id": "a61",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "On what basis can personal data be transferred to a third country under the GDPR's adequacy rules?",
+  "gold_pages": [
+   61
+  ],
+  "evidence": "maytakeplacewherethecommissionhasdecidedthatthethirdcountry",
+  "answerable": true
+ },
+ {
+  "id": "a62",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "question": "What body does the GDPR establish at Union level?",
+  "gold_pages": [
+   76
+  ],
+  "evidence": "isherebyestablishedasabodyoftheunion",
+  "answerable": true
+ },
+ {
+  "id": "a63",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Which paragraph of Schedule 11 sets out the Authority's duty to pay the Supplier within 30 days, according to the Model Services Contract guidance?",
+  "gold_pages": [
+   69
+  ],
+  "evidence": "para2.1ofschedule11(chargesandinvoicing)",
+  "answerable": true
+ },
+ {
+  "id": "a64",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "How are breakage costs capped when the Authority terminates for convenience under the Model Services Contract?",
+  "gold_pages": [
+   92
+  ],
+  "evidence": "arecappedatthehigherofanamountagreedatcontractsignatureor120%",
+  "answerable": true
+ },
+ {
+  "id": "a65",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Within what range should the Data Protection Liability Cap be set in the Model Services Contract?",
+  "gold_pages": [
+   124
+  ],
+  "evidence": "therangeof£10-20millionthedataprotectionliabilitycapshouldbeset",
+  "answerable": true
+ },
+ {
+  "id": "a66",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Does the Model Services Contract include software escrow?",
+  "gold_pages": [
+   58
+  ],
+  "evidence": "doesnotspecificallycontemplatesoftwareescrow",
+  "answerable": true
+ },
+ {
+  "id": "a67",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Who is responsible for having visibility of the Supplier's supply chain, according to the Model Services Contract guidance?",
+  "gold_pages": [
+   70
+  ],
+  "evidence": "itistheresponsibilityoftheauthoritytohaveadequatevisibility",
+  "answerable": true
+ },
+ {
+  "id": "a68",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Which clause of the Model Services Contract deals with step-in rights?",
+  "gold_pages": [
+   68
+  ],
+  "evidence": "clause28(step-inrights)",
+  "answerable": true
+ },
+ {
+  "id": "a69",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "How does the Model Services Contract guidance define open source software?",
+  "gold_pages": [
+   57
+  ],
+  "evidence": "opensourcesoftwareiscomputersoftwarewithitssourcecodemadeavailable",
+  "answerable": true
+ },
+ {
+  "id": "a70",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Which clauses of the Model Services Contract require prompt payment terms to be flowed down to sub-contractors?",
+  "gold_pages": [
+   69
+  ],
+  "evidence": "clauses15.13to15.15(supplychainprotection)",
+  "answerable": true
+ },
+ {
+  "id": "a71",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "Why do Authorities commonly use contract extension periods, according to the Model Services Contract guidance?",
+  "gold_pages": [
+   26
+  ],
+  "evidence": "itiscommonforauthoritiestouseoneormorecontractextensionperiods",
+  "answerable": true
+ },
+ {
+  "id": "a72",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "What is the objective of financial modelling in the Model Services Contract guidance?",
+  "gold_pages": [
+   92
+  ],
+  "evidence": "theobjectiveoffinancialmodellingistoprovidetheauthoritywithfulltransparency",
+  "answerable": true
+ },
+ {
+  "id": "a73",
+  "doc": "Buyer_Guidance_-_MSC_v2.2A_2025.pdf",
+  "question": "What are Service Points used for in the Model Services Contract guidance?",
+  "gold_pages": [
+   64
+  ],
+  "evidence": "whicharesubsequentlyusedtogeneratethefinancialremediesforinadequateperformance",
+  "answerable": true
+ },
+ {
+  "id": "n08",
+  "question": "Which US state's law governs the Mutual NDA?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n09",
+  "question": "What amount of damages must a party pay for breaching the Mutual NDA?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n10",
+  "question": "How many days does a controller have to delete data after an erasure request under the GDPR?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n11",
+  "question": "How many employees must an organisation have before it must appoint a data protection officer under the GDPR?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n12",
+  "question": "What exact amount in pounds should the Data Protection Liability Cap be set at in the Model Services Contract?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n13",
+  "question": "How many extension periods are allowed under the Model Services Contract?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n14",
+  "question": "What is the maximum number of years a Model Services Contract can run?",
+  "answerable": false,
+  "kind": "near_miss"
  }
 ]

@@ -5,13 +5,14 @@ from uuid import UUID
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import ingest, rag, retrieval
 from app.config import Settings, get_settings
 from app.db import apply_migrations, open_pool
 from app.embeddings import build_embedder
+from app.errors import ProviderError
 from app.llm import GroqLLM
 
 
@@ -39,6 +40,11 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(ProviderError)
+async def provider_error_handler(_: Request, exc: ProviderError):
+    return JSONResponse({"detail": exc.message}, status_code=exc.status)
+
+
 def owner_id() -> str:
     """Single shared workspace for now. Auth (phase 3) replaces this one dependency."""
     return "public"
@@ -50,6 +56,8 @@ Owner = Annotated[str, Depends(owner_id)]
 class ChatRequest(BaseModel):
     question: str = Field(min_length=2, max_length=2000)
     document_ids: list[UUID] | None = None
+    # Earlier turns, oldest first, so a follow-up like "and what about torture?" can be resolved.
+    history: list[rag.Turn] = Field(default_factory=list, max_length=20)
 
 
 @app.get("/api/health")
@@ -118,11 +126,12 @@ async def delete_document(document_id: UUID, request: Request, owner: Owner):
 @app.post("/api/chat")
 async def chat(body: ChatRequest, request: Request, owner: Owner):
     s = get_settings()
+    query = await rag.standalone_question(request.app.state.llm, body.history, body.question)
     try:
         result = await retrieval.retrieve(
             request.app.state.pool,
             request.app.state.embedder,
-            body.question,
+            query,
             owner_id=owner,
             document_ids=body.document_ids,
             candidates=s.retrieve_candidates,
@@ -132,7 +141,7 @@ async def chat(body: ChatRequest, request: Request, owner: Owner):
     except psycopg.Error as exc:
         raise HTTPException(503, "Database unavailable") from exc
     stream = rag.answer_stream(
-        request.app.state.llm, body.question, result, min_similarity=s.min_similarity
+        request.app.state.llm, query, result, min_similarity=s.min_similarity
     )
     return StreamingResponse(
         stream,

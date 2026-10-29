@@ -10,18 +10,11 @@ and hybrid retrieval against evals/dataset.json. Writes evals/results/<provider>
 import argparse
 import asyncio
 import json
-import os
 import statistics
 import time
-from pathlib import Path
 
-import psycopg
+from evals.common import DATASET, RESULTS, prepare, sample_pdfs
 
-import app  # noqa: F401  (sets the Windows event-loop policy before asyncio.run creates a loop)
-
-ROOT = Path(__file__).resolve().parents[2]
-DATASET = Path(__file__).parent / "dataset.json"
-RESULTS = Path(__file__).parent / "results"
 KS = (1, 3, 6)
 
 
@@ -33,38 +26,20 @@ def score_item(hits, gold_doc: str, gold_pages: set[int]) -> int | None:
     return None
 
 
-async def main(provider: str, sweep: bool) -> None:
-    os.environ["EMBEDDING_PROVIDER"] = provider
-    base = os.environ.get("DATABASE_URL", "postgresql://lexio:lexio@localhost:5433/lexio")
-    admin, eval_db = base.rsplit("/", 1)[0] + "/postgres", "lexio_eval"
-    os.environ["DATABASE_URL"] = base.rsplit("/", 1)[0] + f"/{eval_db}"
-
-    from app.config import get_settings
-    from app.db import apply_migrations, open_pool
-    from app.embeddings import build_embedder
-    from app.ingest import ingest_pdf
+async def main(provider: str, sweep: bool, reuse: bool) -> None:
+    s, pool, embedder = await prepare(provider, reuse)
     from app.retrieval import retrieve
-
-    with psycopg.connect(admin, autocommit=True) as conn:
-        conn.execute(f"DROP DATABASE IF EXISTS {eval_db} WITH (FORCE)")
-        conn.execute(f"CREATE DATABASE {eval_db}")
-    s = get_settings()
-    apply_migrations(s.database_url)
-    pool = await open_pool(s.database_url)
-    embedder = build_embedder(s)
-
-    t0 = time.perf_counter()
-    for pdf in sorted((ROOT / "data" / "samples").glob("*.pdf")):
-        r = await ingest_pdf(
-            pool, embedder, owner_id="eval", filename=pdf.name, data=pdf.read_bytes(),
-            chunk_chars=s.chunk_chars, overlap=s.chunk_overlap_chars,
-        )
-        print(f"ingested {pdf.name}: {r.page_count} pages, {r.chunk_count} chunks")
-    print(f"ingest took {time.perf_counter() - t0:.1f}s")
 
     items = json.loads(DATASET.read_text(encoding="utf-8"))
     answerable = [i for i in items if i["answerable"]]
-    unanswerable = [i for i in items if not i["answerable"]]
+    # Near-miss questions are on-topic, so no similarity threshold can separate them; the
+    # answer eval covers those. The gate is tested on clearly out-of-scope questions.
+    unanswerable = [i for i in items if not i["answerable"] and i.get("kind") != "near_miss"]
+
+    t0 = time.perf_counter()
+    for it in items:  # warm the cache so every mode's timing excludes the embedding call
+        await embedder.embed_query(it["question"])
+    print(f"embedded {len(items)} questions in {time.perf_counter() - t0:.1f}s")
 
     rows, sims = [], {"answerable": [], "unanswerable": []}
     configs = [
@@ -102,11 +77,11 @@ async def main(provider: str, sweep: bool) -> None:
         f"# Retrieval eval: `{provider}` embeddings",
         "",
         f"{len(answerable)} answerable + {len(unanswerable)} unanswerable questions over "
-        f"{len(list((ROOT / 'data' / 'samples').glob('*.pdf')))} documents. "
+        f"{len(sample_pdfs())} documents. "
         f"Chunk {s.chunk_chars} chars / {s.chunk_overlap_chars} overlap, "
         f"candidates {s.retrieve_candidates}.",
         "",
-        "| mode | hit@1 | hit@3 | hit@6 | MRR | median ms |",
+        "| mode | hit@1 | hit@3 | hit@6 | MRR | median ms (database only) |",
         "|---|---|---|---|---|---|",
     ]
     for mode, hit, mrr, ms in rows:
@@ -140,7 +115,7 @@ async def main(provider: str, sweep: bool) -> None:
     lines.append(f"- unanswerable questions with a keyword hit: {with_kw}/{len(ua)}")
     out = "\n".join(lines) + "\n"
     RESULTS.mkdir(exist_ok=True)
-    (RESULTS / f"{provider}.md").write_text(out, encoding="utf-8")
+    (RESULTS / f"{provider}.md").write_text(out, encoding="utf-8", newline="\n")
     print("\n" + out)
     await pool.close()
 
@@ -149,5 +124,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", choices=["local", "gemini", "hash"], default="local")
     ap.add_argument("--sweep", action="store_true", help="sweep refusal thresholds")
+    ap.add_argument("--reuse", action="store_true", help="keep the ingested eval database")
     a = ap.parse_args()
-    asyncio.run(main(a.provider, a.sweep))
+    asyncio.run(main(a.provider, a.sweep, a.reuse))
