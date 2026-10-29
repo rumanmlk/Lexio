@@ -52,16 +52,33 @@ hit@k = the right page is among the top k results.
 - **The similarity refusal gate does not separate cleanly on this larger corpus with the local model**: answerable questions score down to 0.557 while out-of-scope ones reach 0.641, so any threshold trades missed refusals against wrong ones (at 0.55: 62% of out-of-scope questions refused, no wrong refusals). The near-miss questions are on-topic, so no similarity threshold can catch them; the model has to, and the answer eval measures that.
 - Full output: [`backend/evals/results/local.md`](backend/evals/results/local.md).
 
+### Retrieval (Gemini `gemini-embedding-2`, all five documents)
+
+73 answerable and 8 out-of-scope questions, same chunking as above.
+
+| retrieval | hit@1 | hit@3 | hit@6 | MRR |
+|---|---|---|---|---|
+| vector only | 0.81 | 0.93 | 0.96 | 0.871 |
+| keyword only | 0.74 | 0.82 | 0.89 | 0.786 |
+| hybrid, keyword weight 1.0 (default) | 0.81 | 0.89 | 0.93 | 0.856 |
+| hybrid, keyword weight 0.5 | 0.81 | 0.92 | 0.95 | 0.861 |
+| hybrid, keyword weight 0.25 | 0.78 | 0.93 | 0.95 | 0.857 |
+
+- **With Gemini embeddings, hybrid does not beat plain vector search** on this question set (MRR 0.856 vs 0.871). The gap between the hybrid weights is one or two questions out of 73, which is within noise, so the default weight of 1.0 was not changed. Hybrid is kept for the same robustness reason as above (and the local model, where keyword search is the stronger signal).
+- **Refusal threshold 0.65 holds up, but with little room.** Answerable questions score from 0.661 to 0.851 (median 0.773); out-of-scope ones from 0.548 to 0.704 (median 0.625). At 0.65, 62% of out-of-scope questions are refused and none of the answerable ones; 0.70 would refuse 88% but also wrongly refuse 10% of answerable ones. The lowest answerable score is only 0.011 above the threshold, so a few more questions could push a correct one under it. The keyword check does not help: all 8 out-of-scope questions had a keyword hit.
+- Full output: [`backend/evals/results/gemini.md`](backend/evals/results/gemini.md).
+
 ### Earlier run with Gemini embeddings and Groq answers (two UN documents only)
 
 Measured before the other three documents and the `ts_rank` change, so it does not describe the current code. It is kept in [`backend/evals/results/history/`](backend/evals/results/history/). On 38 questions: Gemini hybrid reached hit@3 1.00 and MRR 0.934; every answer was grounded and 38/38 cited a gold page; all 8 out-of-scope questions were refused; and an instruction planted inside a document was ignored. The first version of that eval reported only 34% grounded: the model wrote citations as `【1†L1-L3】` and the parser only knew `[1]`. Fixing the parser is why the answer eval exists.
 
-**Not yet measured:** Gemini embeddings and Groq answers on all five documents. Both free tiers cap what one day can do (see below), so the runs are resumable:
+**Not yet measured:** Groq answers on all five documents with Gemini retrieval. The free tier caps what one day can do (see below), so the run is resumable:
 
 ```bash
-uv run python -m evals.run --provider gemini --sweep --reuse   # about 900 of Gemini's 1000 daily embeddings, once
 uv run python -m evals.answers --provider gemini --reuse       # stops at Groq's daily limit; run again to continue
 ```
+
+The Gemini retrieval eval above was produced with `uv run python -m evals.run --provider gemini --sweep --reuse` (about 920 of Gemini's 1000 daily embeddings, once).
 
 ### Free-tier limits that shape the project
 
