@@ -65,9 +65,34 @@ uv run python -m evals.answers --provider gemini --reuse       # stops at Groq's
 
 ### Free-tier limits that shape the project
 
-- **Gemini embeddings:** 1,000 requests per day per model, and every chunk in a batch counts as one. Ingesting the five documents takes about 800. A demo where visitors upload long PDFs will exhaust this quickly, so Phase 3 and 4 need a plan: pre-ingested samples, reuse of embeddings for identical text, per-user caps, or the paid tier.
-- **Groq `gpt-oss-120b`:** 200,000 tokens per day and 8,000 per minute. A full answer eval (about 300,000 tokens) therefore takes two days; finished cases are cached.
+- **Gemini embeddings:** about 1,000 requests per day (measured on this project; Google does not publish the embedding figure), and every chunk in a batch counts as one. Daily quotas reset at midnight Pacific time. Ingesting the five documents takes about 800.
+- **Groq `gpt-oss-120b`:** 30 requests and 8,000 tokens per minute, 1,000 requests and 200,000 tokens per day ([Groq's rate-limit table](https://console.groq.com/docs/rate-limits)). A full answer eval (about 300,000 tokens) therefore takes two days; finished cases are cached. One answer costs about 3,000 tokens, so **Groq, not Gemini, is the real ceiling for a public demo: roughly 60 answers a day in total.** (That per-answer figure is derived from the eval's token use, not measured on live traffic.)
 - The app stops retrying when a provider reports a daily limit and tells the user when it resets, instead of failing slowly.
+- Paid Gemini embeddings cost $0.20 per million input tokens ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). By my arithmetic (about 800 chunks of roughly 300 tokens) the whole sample set is around five cents, so the paid tier is the cheap way out if the free quota ever becomes the constraint.
+
+### Running a public demo inside those limits
+
+`DEMO_MODE=true` switches on a preset that keeps a shared deployment inside the free tiers. Every number can be overridden on its own (`0` turns a limit off):
+
+| Setting | Demo preset | What it does |
+|---|---|---|
+| `UPLOADS_ENABLED` | `false` | The shared workspace is read-only: upload **and delete** return 403, so visitors can neither burn embedding quota nor delete the samples |
+| `QUESTION_DAILY_LIMIT` | 60 | Answers per day across all visitors (Groq's token budget) |
+| `VISITOR_QUESTION_LIMIT` | 10 | Answers per visitor per day |
+| `VISITOR_UPLOAD_LIMIT` | 2 | New documents per visitor per day, if uploads are turned on |
+| `MAX_UPLOAD_CHUNKS` | 150 | Longest PDF accepted (one chunk is one Gemini request) |
+| `EMBED_DAILY_LIMIT` | 1000 (always, with Gemini) | Embedding requests per day; `EMBED_QUERY_RESERVE` (200) of them are kept back, so uploads can never leave the app unable to embed a question |
+
+How it works:
+
+- Counters live in Postgres (`daily_usage`), so every serverless instance shares them, and days roll over at midnight Pacific like Gemini's quota. Reservations are atomic: concurrent requests cannot overshoot a limit (tested with 40 racing claims against a limit of 10).
+- A refused request returns **429** with a `Retry-After` header and a plain message ("…It resets in about 5 hours."). It is refused before any provider is called, so it costs nothing, and a request that fails at the provider gives its reservation back (a question whose answer fails before any text is sent does not count against the visitor's daily questions). Duplicate and unreadable PDFs are never charged.
+- If Gemini reports its daily quota gone, the counter is set to match, so later uploads are refused immediately instead of failing slowly.
+- `GET /api/limits` tells a client what the visitor has left, so a UI can disable controls instead of failing.
+- Visitors are told apart by a salted hash of their IP (the IP itself is never stored). Set `VISITOR_SALT`, and `TRUST_FORWARDED_FOR=true` only behind a proxy that sets `X-Forwarded-For` itself, as Vercel does; the last entry is used, so a client cannot choose its own identity by sending the header. Phase 3 replaces this with real accounts.
+- **Seeding the demo:** `uv run python -m evals.seed` loads the sample PDFs into `DATABASE_URL`. It reads vectors from the eval's embedding cache, so after the Gemini retrieval eval has run it needs no Gemini requests at all; anything missing is embedded once and cached. Reruns skip documents already present.
+
+What this does not cover: the counters see only traffic through this API (running the evals on the same Gemini project uses quota they cannot see; the provider's own error is the backstop, and the app then records it). The question cap is a proxy for Groq tokens, not a token meter.
 
 ## Run the backend
 
@@ -112,18 +137,19 @@ Sends each question through the same path as `/api/chat` with Groq and checks th
 | `POST` | `/api/documents` | multipart PDF upload; deduplicated by SHA-256 |
 | `GET` | `/api/documents` | list |
 | `DELETE` | `/api/documents/{id}` | delete with its chunks |
+| `GET` | `/api/limits` | what this visitor may still do today (questions, uploads, reset time) |
 | `POST` | `/api/chat` | `{question, document_ids?, history?}`, answers as Server-Sent Events: `sources` (with the `query` actually searched), `token`…, `done`/`error` |
 
-Errors are explicit: unreadable, password-protected or scanned (no text layer) PDFs return `422` with a reason; a rejected API key returns `502` and a rate limit or timeout returns `503`, after retries with backoff. If the LLM fails after streaming has started, the stream ends with an `error` event.
+Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (see above); unreadable, password-protected or scanned (no text layer) PDFs return `422` with a reason; a rejected API key returns `502` and a rate limit or timeout returns `503`, after retries with backoff. If the LLM fails after streaming has started, the stream ends with an `error` event.
 
 ## Known limitations
 
 - No OCR: scanned PDFs are rejected, not read.
 - Follow-ups work by rewriting the latest message into a standalone question with the LLM; there is no other conversation memory, and a failed rewrite falls back to searching the raw message.
 - The eval set is small (73 answerable questions over five documents, only two of them contracts). Treat the numbers as a regression check, not proof of accuracy on real contracts.
-- Free-tier quotas (see above) limit uploads and evals; they are a deployment concern, not a code one.
+- Free-tier quotas (see above) limit uploads, evals and how many questions a public demo can answer per day. The budget guard keeps a deployment inside them; it does not raise them.
 - Prompt-injection defences (documents are fenced as untrusted data and the prompt says never to obey them) reduce the risk but cannot remove it.
-- No authentication or rate limiting yet (Phase 3): every client shares one workspace.
+- No authentication yet (Phase 3): every client shares one workspace. Limits are per visitor (hashed IP), which people behind one shared address will share.
 
 ## Roadmap
 

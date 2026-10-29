@@ -105,6 +105,13 @@ class CachedLLM:
         self.cache.put(key, text)  # only reached when the stream finished without an error
 
 
+def embedding_cache(s, provider: str) -> JsonlCache:
+    """The one on-disk cache of document/query vectors for this provider, model and size."""
+    model = s.gemini_embedding_model if provider == "gemini" else s.local_embedding_model
+    safe = "".join(c if c.isalnum() else "-" for c in f"{provider}-{model}-{s.embedding_dim}")
+    return JsonlCache(CACHE / f"embeddings-{safe}.jsonl")
+
+
 def eval_llm(s) -> CachedLLM:
     from app.llm import GroqLLM
 
@@ -148,11 +155,7 @@ async def prepare(provider: str, reuse: bool = False):
             conn.execute(f"CREATE DATABASE {eval_db}")
     apply_migrations(s.database_url)
     pool = await open_pool(s.database_url)
-    model = s.gemini_embedding_model if provider == "gemini" else s.local_embedding_model
-    safe = "".join(c if c.isalnum() else "-" for c in f"{provider}-{model}-{s.embedding_dim}")
-    embedder = CachedEmbedder(
-        build_embedder(s, PATIENT), JsonlCache(CACHE / f"embeddings-{safe}.jsonl")
-    )
+    embedder = CachedEmbedder(build_embedder(s, PATIENT), embedding_cache(s, provider))
 
     if keep:
         print(f"reusing {eval_db} (already holds the {len(sample_pdfs())} PDFs)")

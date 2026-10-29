@@ -11,6 +11,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # conservative 0.5 (no false refusals). hash is the test embedder and has no calibration.
 THRESHOLDS = {"gemini": 0.65, "local": 0.5, "hash": 0.5}
 
+# The demo-preset limits, in the order of their preset values in Settings._defaults.
+LIMITS = ("question_daily_limit", "visitor_question_limit", "visitor_upload_limit",
+          "max_upload_chunks")
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
@@ -41,10 +45,42 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Free-tier guards (app/budget.py). DEMO_MODE=true is the public-demo preset: the shared
+    # sample documents are read-only and questions are capped per visitor and per day. Each
+    # setting below can still be set on its own; a value of 0 turns that limit off.
+    demo_mode: bool = False
+    uploads_enabled: bool | None = None  # default: on, except in demo mode
+    # Groq allows 200k tokens a day and an answer costs about 3k, so ~60 answers a day in all.
+    question_daily_limit: int | None = None  # demo preset: 60
+    visitor_question_limit: int | None = None  # demo preset: 10
+    visitor_upload_limit: int | None = None  # demo preset: 2 (only matters if uploads are on)
+    max_upload_chunks: int | None = None  # demo preset: 150 (one chunk = one Gemini request)
+    # Gemini's free tier counts one request per chunk, 1000 a day. `embed_query_reserve` of them
+    # are kept back so uploads can never leave the app unable to embed a question.
+    embed_daily_limit: int | None = None  # default: 1000 with Gemini embeddings, else none
+    embed_query_reserve: int = 200
+    # Behind a proxy that sets X-Forwarded-For itself (Vercel does), identify visitors by it.
+    trust_forwarded_for: bool = False
+    visitor_salt: str = "lexio"  # visitors are stored as a salted hash of their IP, never the IP
+
     @model_validator(mode="after")
-    def _default_threshold(self):
+    def _defaults(self):
         if self.min_similarity is None:
             self.min_similarity = THRESHOLDS[self.embedding_provider]
+        demo = self.demo_mode
+        if self.uploads_enabled is None:
+            self.uploads_enabled = not demo
+        if self.embed_daily_limit is None and self.embedding_provider == "gemini":
+            self.embed_daily_limit = 1000
+        for name, preset in zip(LIMITS, (60, 10, 2, 150), strict=True):
+            if getattr(self, name) is None and demo:
+                setattr(self, name, preset)
+        for name in LIMITS + ("embed_daily_limit",):
+            if getattr(self, name) == 0:
+                setattr(self, name, None)  # an explicit 0 means "off", the same as unset
+        limit = self.embed_daily_limit
+        if limit and limit <= self.embed_query_reserve:  # a small limit still leaves room to upload
+            self.embed_query_reserve = limit // 5
         return self
 
 

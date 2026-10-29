@@ -51,7 +51,7 @@ def retry_delay(exc: Exception, attempt: int, policy: RetryPolicy) -> float | No
     return policy.backoff * 2**attempt if isinstance(exc, httpx.TransportError) else None
 
 
-def _duration(seconds: float) -> str:
+def duration(seconds: float) -> str:
     if seconds >= 5400:
         return f"{round(seconds / 3600)} hours"
     return f"{max(1, round(seconds / 60))} minutes"
@@ -69,7 +69,7 @@ def from_exception(provider: str, exc: Exception) -> ProviderError:
             if advised and advised > QUOTA_WAIT:
                 return ProviderError(
                     503,
-                    f"{provider} quota is used up; it resets in about {_duration(advised)}.",
+                    f"{provider} quota is used up; it resets in about {duration(advised)}.",
                     quota=True,
                 )
             return ProviderError(503, f"{provider} rate limit reached. Try again shortly.")

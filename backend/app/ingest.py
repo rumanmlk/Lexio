@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import io
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -103,7 +104,11 @@ async def ingest_pdf(
     data: bytes,
     chunk_chars: int,
     overlap: int,
+    before_embed: Callable[[int], Awaitable[None]] | None = None,
 ) -> IngestResult:
+    """`before_embed(n)` runs once the PDF is known to be new and readable, with the number of
+    chunks about to be embedded (one API request each). Raising there aborts the ingest, which is
+    where a deployment enforces its free-tier budget without charging duplicates or bad files."""
     sha = hashlib.sha256(data).hexdigest()
     async with pool.connection() as conn:
         row = await (
@@ -123,6 +128,8 @@ async def ingest_pdf(
             "No text found in this PDF. It is probably a scan; OCR is not supported yet."
         )
 
+    if before_embed:
+        await before_embed(len(chunks))
     vectors = await embedder.embed_documents([c.content for c in chunks])
 
     async with pool.connection() as conn, conn.transaction():

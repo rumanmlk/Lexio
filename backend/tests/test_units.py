@@ -169,3 +169,25 @@ async def test_hash_embedder_is_deterministic_and_normalized():
     a, b = await e.embed_query("freedom of speech"), await e.embed_query("freedom of speech")
     assert a == b
     assert abs(sum(x * x for x in a) - 1.0) < 1e-4
+
+
+def test_settings_presets_for_the_free_tier():
+    from app.config import Settings
+
+    dev = Settings(embedding_provider="hash", _env_file=None)
+    assert dev.uploads_enabled and dev.question_daily_limit is None
+    assert dev.embed_daily_limit is None
+
+    demo = Settings(embedding_provider="gemini", demo_mode=True, _env_file=None)
+    assert not demo.uploads_enabled and demo.embed_daily_limit == 1000
+    assert (demo.question_daily_limit, demo.visitor_question_limit) == (60, 10)
+    assert (demo.visitor_upload_limit, demo.max_upload_chunks) == (2, 150)
+
+    custom = Settings(embedding_provider="gemini", demo_mode=True, uploads_enabled=True,
+                      visitor_question_limit=3, embed_daily_limit=300, embed_query_reserve=400,
+                      _env_file=None)
+    assert custom.uploads_enabled and custom.visitor_question_limit == 3
+    assert custom.embed_query_reserve == 60  # clamped so a small limit still allows uploads
+    off = Settings(embedding_provider="hash", demo_mode=True, visitor_question_limit=0,
+                   _env_file=None)
+    assert off.visitor_question_limit is None and off.question_daily_limit == 60  # 0 = off
