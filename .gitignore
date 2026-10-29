@@ -18,6 +18,7 @@ node_modules/
 out/
 .vercel/
 *.tsbuildinfo
+next-env.d.ts
 
 # Local data and caches
 vectorstore/
@@ -32,6 +33,7 @@ uploads/
 Thumbs.db
 .claude/
 CLAUDE.md
+AGENTS.md
 scratch/
 notes/
 *.local.md

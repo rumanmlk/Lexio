@@ -95,6 +95,13 @@ class IngestResult:
     duplicate: bool
 
 
+async def _store_file(conn, doc_id, data: bytes) -> None:
+    await conn.execute(
+        "INSERT INTO document_files (document_id, data) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+        (doc_id, data),
+    )
+
+
 async def ingest_pdf(
     pool: AsyncConnectionPool,
     embedder: Embedder,
@@ -113,12 +120,16 @@ async def ingest_pdf(
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT id, filename, page_count, chunk_count FROM documents "
-                "WHERE owner_id = %s AND sha256 = %s",
+                "SELECT d.id, d.filename, d.page_count, d.chunk_count, f.document_id IS NOT NULL "
+                "FROM documents d LEFT JOIN document_files f ON f.document_id = d.id "
+                "WHERE d.owner_id = %s AND d.sha256 = %s",
                 (owner_id, sha),
             )
         ).fetchone()
     if row:
+        if not row[4]:  # ingested before files were kept: fill it in once
+            async with pool.connection() as conn:
+                await _store_file(conn, row[0], data)
         return IngestResult(row[0], row[1], row[2], row[3], duplicate=True)
 
     pages = await asyncio.to_thread(extract_pages, data)  # CPU-bound; keep the event loop free
@@ -151,4 +162,5 @@ async def ingest_pdf(
                     for i, (c, v) in enumerate(zip(chunks, vectors, strict=True))
                 ],
             )
+        await _store_file(conn, doc_id, data)
     return IngestResult(doc_id, filename, len(pages), len(chunks), duplicate=False)

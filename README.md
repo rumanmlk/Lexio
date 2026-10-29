@@ -106,7 +106,19 @@ uv sync --group dev
 uv run uvicorn app.main:app --reload
 ```
 
-API docs at http://localhost:8000/docs.
+API docs at http://localhost:8000/docs. On Windows keep `--reload`: without it uvicorn uses an event loop that psycopg's async mode cannot run on, and every database call times out.
+
+## Run the web app
+
+```bash
+cd frontend
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL, default http://localhost:8000
+npm install
+npm run dev                  # http://localhost:3000
+npm test                     # stream parser and citation tests
+```
+
+Streaming chat over the SSE events, `[n]` citations that open the PDF at the cited page, a document filter, upload and delete, and the daily limits (remaining questions shown, controls disabled, `429` explained with the wait). To get sample documents into a local database: `cd backend && uv run python -m evals.seed --provider local`.
 
 ```bash
 uv run pytest               # unit tests + end-to-end against local Postgres, no API keys needed
@@ -136,9 +148,10 @@ Sends each question through the same path as `/api/chat` with Groq and checks th
 |---|---|---|
 | `POST` | `/api/documents` | multipart PDF upload; deduplicated by SHA-256 |
 | `GET` | `/api/documents` | list |
+| `GET` | `/api/documents/{id}/file` | the original PDF, for the viewer |
 | `DELETE` | `/api/documents/{id}` | delete with its chunks |
 | `GET` | `/api/limits` | what this visitor may still do today (questions, uploads, reset time) |
-| `POST` | `/api/chat` | `{question, document_ids?, history?}`, answers as Server-Sent Events: `sources` (with the `query` actually searched), `token`…, `done`/`error` |
+| `POST` | `/api/chat` | `{question, document_ids?, history?}`, answers as Server-Sent Events: `sources` (with the `query` actually searched), `token`…, `done` (`grounded`, `cited`, `refused`) or `error` |
 
 Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (see above); unreadable, password-protected or scanned (no text layer) PDFs return `422` with a reason; a rejected API key returns `502` and a rate limit or timeout returns `503`, after retries with backoff. If the LLM fails after streaming has started, the stream ends with an `error` event.
 
@@ -154,7 +167,7 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 ## Roadmap
 
 - [x] Phase 1: FastAPI + pgvector + hybrid retrieval + citations + eval harness
-- [ ] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page
+- [x] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page (uses the browser's built-in PDF viewer)
 - [ ] Phase 3: auth, per-user documents, rate limiting
 - [ ] Phase 4: Vercel + Neon deployment, Langfuse tracing, CI evals
 

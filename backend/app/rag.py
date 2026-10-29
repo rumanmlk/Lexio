@@ -166,7 +166,7 @@ async def answer_stream(
     if should_refuse(retrieval, min_similarity):
         yield sse("sources", {"sources": [], "query": question})
         yield sse("token", {"text": REFUSAL})
-        yield sse("done", {"grounded": False, "cited": []})
+        yield sse("done", {"grounded": False, "cited": [], "refused": True})
         return
 
     hits = retrieval.hits
@@ -191,4 +191,5 @@ async def answer_stream(
         yield sse("error", error)
         return
     cited = cited_numbers(text, len(hits))
-    yield sse("done", {"grounded": bool(cited) and REFUSAL not in text, "cited": cited})
+    refused = REFUSAL in text
+    yield sse("done", {"grounded": bool(cited) and not refused, "cited": cited, "refused": refused})

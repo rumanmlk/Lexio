@@ -6,6 +6,7 @@ import asyncio
 import io
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import psycopg
 import pytest
@@ -87,6 +88,19 @@ def test_upload_dedupes_chat_cites_and_delete(client):
     assert again.json()["duplicate"] and again.json()["id"] == doc_id
     assert len(client.get("/api/documents").json()) == 1
 
+    served = client.get(f"/api/documents/{doc_id}/file")
+    assert served.status_code == 200 and served.content == data
+    assert served.headers["content-type"] == "application/pdf"
+    assert served.headers["x-content-type-options"] == "nosniff"
+    assert client.get(f"/api/documents/{uuid4()}/file").status_code == 404
+
+    # A document ingested before files were kept gets its file on the next upload of the same PDF.
+    with psycopg.connect(get_settings().database_url, autocommit=True) as conn:
+        conn.execute("DELETE FROM document_files")
+    assert client.get(f"/api/documents/{doc_id}/file").status_code == 404
+    client.post("/api/documents", files={"file": (SAMPLE.name, data, "application/pdf")})
+    assert client.get(f"/api/documents/{doc_id}/file").content == data
+
     r = client.post("/api/chat", json={"question": "Does everyone have the right to education?"})
     events = parse_sse(r.text)
     names = [n for n, _ in events]
@@ -94,17 +108,18 @@ def test_upload_dedupes_chat_cites_and_delete(client):
     sources = events[0][1]["sources"]
     assert sources and all(s["page"] >= 1 and s["document_id"] == doc_id for s in sources)
     assert "".join(d["text"] for n, d in events if n == "token").endswith("[1]")
-    assert events[-1][1] == {"grounded": True, "cited": [1]}
+    assert events[-1][1] == {"grounded": True, "cited": [1], "refused": False}
 
     assert client.delete(f"/api/documents/{doc_id}").status_code == 204
     assert client.delete(f"/api/documents/{doc_id}").status_code == 404
     assert client.get("/api/documents").json() == []
+    assert client.get(f"/api/documents/{doc_id}/file").status_code == 404
 
 
 def test_chat_refuses_when_nothing_indexed(client):
     r = client.post("/api/chat", json={"question": "What is the notice period?"})
     events = parse_sse(r.text)
-    assert events[-1] == ("done", {"grounded": False, "cited": []})
+    assert events[-1] == ("done", {"grounded": False, "cited": [], "refused": True})
     assert "can't find" in events[1][1]["text"]
 
 
@@ -149,7 +164,7 @@ def test_native_citation_format_is_normalized_in_the_stream(client, indexed, swa
     question = "Does everyone have the right to education?"
     events = parse_sse(client.post("/api/chat", json={"question": question}).text)
     assert "".join(d["text"] for n, d in events if n == "token") == "Everyone has the right.[1]"
-    assert events[-1] == ("done", {"grounded": True, "cited": [1]})
+    assert events[-1] == ("done", {"grounded": True, "cited": [1], "refused": False})
 
 
 def _blank_pdf(password: str | None = None) -> bytes:
@@ -411,3 +426,27 @@ def test_question_that_fails_before_any_text_is_given_back(client, limits, index
     swap_state("llm", Failing(["Everyone has "]))
     events = parse_sse(client.post("/api/chat", json=question).text)
     assert events[-1][0] == "error" and used(client, "questions") == 1  # part of an answer was
+
+
+def test_done_event_says_whether_the_model_refused_or_just_gave_no_citation(
+    client, indexed, swap_state
+):
+    def final(r):
+        return parse_sse(r.text)[-1]
+
+    class Says:
+        def __init__(self, text):
+            self.text = text
+
+        async def stream(self, system, user):
+            yield self.text
+
+    ask = {"question": "Does everyone have the right to education?"}
+    swap_state("llm", Says(rag.REFUSAL))
+    assert final(client.post("/api/chat", json=ask)) == (
+        "done", {"grounded": False, "cited": [], "refused": True}
+    )
+    swap_state("llm", Says("Probably, but I am not citing anything."))
+    assert final(client.post("/api/chat", json=ask)) == (
+        "done", {"grounded": False, "cited": [], "refused": False}
+    )

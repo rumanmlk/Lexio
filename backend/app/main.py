@@ -9,7 +9,7 @@ from uuid import UUID
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import budget, ingest, rag, retrieval
@@ -205,6 +205,31 @@ async def list_documents(request: Request, owner: Owner):
         {"id": str(r[0]), "filename": r[1], "pages": r[2], "chunks": r[3], "created_at": r[4]}
         for r in rows
     ]
+
+
+@app.get("/api/documents/{document_id}/file")
+async def document_file(document_id: UUID, request: Request, owner: Owner):
+    async with request.app.state.pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT f.data FROM documents d "
+                "JOIN document_files f ON f.document_id = d.id "
+                "WHERE d.id = %s AND d.owner_id = %s",
+                (document_id, owner),
+            )
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Document file not found")
+    return Response(
+        row[0],
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, max-age=3600",
+            # Uploaded bytes: never let a browser reinterpret them as another type.
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.delete("/api/documents/{document_id}", status_code=204)
