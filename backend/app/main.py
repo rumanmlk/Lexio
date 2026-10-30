@@ -1,15 +1,17 @@
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from uuid import UUID
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
-from app import budget, ingest, rag, retrieval
+from app import budget, ingest, rag, retrieval, storage, tracing
 from app.auth import SAMPLES, User, Who
 from app.config import Settings, get_settings
 from app.db import apply_migrations, open_pool
@@ -19,18 +21,31 @@ from app.llm import GroqLLM
 
 log = logging.getLogger(__name__)
 
+CHUNK = 256 * 1024
+
 
 def build_llm(s: Settings):
     return GroqLLM(s.groq_api_key, s.groq_model)
 
 
+async def housekeeping(pool, s: Settings) -> None:
+    await budget.prune(pool)
+    if s.blob_enabled:
+        try:
+            removed = await storage.sweep_orphans(pool, s)
+            if removed:
+                log.info("removed %d unregistered upload(s) from Blob", removed)
+        except Exception:  # noqa: BLE001 - housekeeping must never take the app down
+            log.warning("blob sweep failed", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
-    apply_migrations(s.database_url)
+    apply_migrations(s.database_url_unpooled or s.database_url)
     app.state.pool = await open_pool(s.database_url)
     # Housekeeping must not delay the first request of a cold serverless instance.
-    pruning = asyncio.create_task(budget.prune(app.state.pool))
+    pruning = asyncio.create_task(housekeeping(app.state.pool, s))
     app.state.embedder = build_embedder(s)
     app.state.llm = build_llm(s)
     yield
@@ -158,17 +173,95 @@ async def health(request: Request):
     return {"status": "ok"}
 
 
-@app.post("/api/documents", status_code=201)
-async def upload_document(request: Request, who: User, file: UploadFile):
-    s = get_settings()
-    require_writable(s)
-    if not (file.filename or "").lower().endswith(".pdf"):
+def check_pdf(s: Settings, filename: str | None, data: bytes) -> None:
+    if not (filename or "").lower().endswith(".pdf"):
         raise HTTPException(415, "Only PDF files are supported")
-    data = await file.read()
     if len(data) > s.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"File exceeds {s.max_upload_mb} MB")
     if not data.startswith(b"%PDF"):
         raise HTTPException(415, "File is not a valid PDF")
+
+
+@app.post("/api/documents", status_code=201)
+async def upload_document(request: Request, who: User, file: UploadFile):
+    s = get_settings()
+    require_writable(s)
+    if s.blob_enabled:  # a Vercel function would refuse most PDFs here anyway (4.5 MB limit)
+        raise HTTPException(400, "Upload the PDF to storage, then POST /api/documents/register.")
+    data = await file.read()
+    check_pdf(s, file.filename, data)
+    return await ingest_upload(request, who, s, file.filename, data)
+
+
+@app.post("/api/upload-ticket")
+async def upload_ticket(request: Request, who: User):
+    """Called by the Next.js app (with the user's own token) just before it hands the browser an
+    upload token for Blob: all the checks that do not need the file, so a refused user never
+    gets one. Returns where this user's uploads must go and how big one may be."""
+    s = get_settings()
+    require_writable(s)
+    if not s.blob_enabled:
+        raise HTTPException(404, "Direct uploads are not enabled on this server.")
+    pool = request.app.state.pool
+    await require_room(pool, s, who.user_id, 1)
+    if s.upload_ticket_limit:
+        await claim_budget(pool, [
+            budget.Claim(budget.visitor_tickets(who.counter_key), 1, s.upload_ticket_limit,
+                         "You have started too many uploads today.")
+        ])
+    return {"prefix": storage.user_prefix(who.user_id), "max_bytes": s.max_upload_mb * 1024 * 1024}
+
+
+class RegisterRequest(BaseModel):
+    pathname: str = Field(min_length=1, max_length=512)
+    filename: str = Field(min_length=1, max_length=255)
+
+
+@app.post("/api/documents/register", status_code=201)
+async def register_document(body: RegisterRequest, request: Request, who: User):
+    """Second half of a direct-to-storage upload: the browser has put the PDF in Blob; this checks
+    it belongs to the caller, reads and indexes it, and keeps it (or deletes it if it is rejected
+    or already stored)."""
+    s = get_settings()
+    require_writable(s)
+    if not s.blob_enabled:
+        raise HTTPException(404, "Direct uploads are not enabled on this server.")
+    if not storage.owns(who.user_id, body.pathname):
+        raise HTTPException(403, "That upload does not belong to you.")
+    pool = request.app.state.pool
+    try:
+        async with pool.connection() as conn:
+            known = await (
+                await conn.execute(
+                    "SELECT id, filename, page_count, chunk_count FROM documents "
+                    "WHERE blob_path = %s",
+                    (body.pathname,),
+                )
+            ).fetchone()
+    except psycopg.Error as exc:
+        raise HTTPException(503, "Database unavailable") from exc
+    if known:  # registered twice: answer again, and never delete the file the document uses
+        return {"id": str(known[0]), "filename": known[1], "pages": known[2], "chunks": known[3],
+                "duplicate": True, "sample": False}
+    try:
+        data = await storage.read(s, body.pathname)
+    except storage.BlobMissing as exc:
+        raise HTTPException(404, "Upload not found. Try uploading again.") from exc
+    try:
+        check_pdf(s, body.filename, data)
+        out = await ingest_upload(request, who, s, body.filename, data, blob_path=body.pathname)
+    except BaseException:
+        await storage.delete(s, [body.pathname])
+        raise
+    if out["duplicate"]:  # the earlier copy stays; this one is surplus
+        await storage.delete(s, [body.pathname])
+    return out
+
+
+async def ingest_upload(
+    request: Request, who: User, s: Settings, filename: str, data: bytes,
+    blob_path: str | None = None,
+) -> dict:
     pool = request.app.state.pool
     receipt: budget.Receipt | None = None
 
@@ -198,11 +291,12 @@ async def upload_document(request: Request, who: User, file: UploadFile):
             request.app.state.embedder,
             owner_id=who.user_id,
             reuse_from=[SAMPLES],
-            filename=file.filename,
+            filename=filename,
             data=data,
             chunk_chars=s.chunk_chars,
             overlap=s.chunk_overlap_chars,
             before_embed=reserve,
+            blob_path=blob_path,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -240,37 +334,60 @@ async def document_file(document_id: UUID, request: Request, who: Who):
     async with request.app.state.pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT f.data, d.owner_id FROM documents d "
-                "JOIN document_files f ON f.document_id = d.id "
+                "SELECT f.data, d.owner_id, d.blob_path FROM documents d "
+                "LEFT JOIN document_files f ON f.document_id = d.id "
                 "WHERE d.id = %s AND d.owner_id = ANY(%s)",
                 (document_id, who.owners),
             )
         ).fetchone()
-    if not row:
+    if not row or (row[0] is None and row[2] is None):
         raise HTTPException(404, "Document file not found")
     # A browser cache is keyed by URL, not by who is signed in, so only the samples (readable by
     # everyone) may be cached; a user's own PDF must be checked again on every request.
     cache = "private, max-age=3600" if row[1] == SAMPLES else "private, no-store"
-    return Response(
-        row[0],
+    headers = {
+        "Content-Disposition": "inline",
+        "Cache-Control": cache,
+        # Uploaded bytes: never let a browser reinterpret them as another type.
+        "X-Content-Type-Options": "nosniff",
+    }
+    # Streamed: a Vercel function may not return a body over 4.5 MB in one piece, and the biggest
+    # sample is 6 MB.
+    if row[0] is not None:
+        data = bytes(row[0])
+        headers["Content-Length"] = str(len(data))
+        return StreamingResponse(
+            (data[i : i + CHUNK] for i in range(0, len(data), CHUNK)),
+            media_type="application/pdf",
+            headers=headers,
+        )
+    s = get_settings()
+    if not s.blob_enabled:
+        raise HTTPException(404, "Document file not found")
+    try:
+        stream, stack = await storage.open_stream(s, row[2])
+    except storage.BlobMissing as exc:
+        raise HTTPException(404, "Document file not found") from exc
+    return StreamingResponse(
+        stream,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": cache,
-            # Uploaded bytes: never let a browser reinterpret them as another type.
-            "X-Content-Type-Options": "nosniff",
-        },
+        headers=headers,
+        background=BackgroundTask(stack.aclose),
     )
 
 
 @app.delete("/api/documents/{document_id}", status_code=204)
 async def delete_document(document_id: UUID, request: Request, who: User):
-    require_writable(get_settings())
+    s = get_settings()
+    require_writable(s)
     async with request.app.state.pool.connection() as conn:
         cur = await conn.execute(
-            "DELETE FROM documents WHERE id = %s AND owner_id = %s", (document_id, who.user_id)
+            "DELETE FROM documents WHERE id = %s AND owner_id = %s RETURNING blob_path",
+            (document_id, who.user_id),
         )
-        if cur.rowcount:
+        gone = await cur.fetchall()
+        if gone:
+            await storage.delete(s, [r[0] for r in gone if r[0]])
             return
         shared = await (
             await conn.execute(
@@ -288,7 +405,11 @@ async def delete_me(request: Request, who: User):
     Nothing else identifies them: the daily counters are keyed by a salted hash and expire on
     their own, which also stops a delete-and-sign-up-again from resetting today's limits."""
     async with request.app.state.pool.connection() as conn:
-        await conn.execute("DELETE FROM documents WHERE owner_id = %s", (who.user_id,))
+        cur = await conn.execute(
+            "DELETE FROM documents WHERE owner_id = %s RETURNING blob_path", (who.user_id,)
+        )
+        paths = [r[0] for r in await cur.fetchall() if r[0]]
+    await storage.delete(get_settings(), paths)
 
 
 @app.get("/api/limits")
@@ -305,6 +426,8 @@ async def limits(request: Request, who: Who):
     except psycopg.Error as exc:
         raise HTTPException(503, "Database unavailable") from exc
 
+    prefix = storage.user_prefix(who.user_id) if s.blob_enabled and who.user_id else None
+
     def entry(key: str, limit: int | None) -> dict:
         return {"used": used[key], "limit": limit}
 
@@ -316,6 +439,8 @@ async def limits(request: Request, who: Who):
         "documents": {"used": docs_used, "limit": s.user_max_documents},
         "storage_mb": {"used": round(bytes_used / 1024 / 1024, 1), "limit": s.user_max_mb},
         "max_upload_mb": s.max_upload_mb,
+        "direct_upload": s.blob_enabled,  # true: upload to storage, then POST /documents/register
+        "upload_prefix": prefix,
         "max_upload_chunks": s.max_upload_chunks,
         "questions": entry(keys[1], s.visitor_question_limit),
         "site_questions": entry(keys[0], s.question_daily_limit),
@@ -345,8 +470,21 @@ async def chat(body: ChatRequest, request: Request, who: Who):
     if s.embed_daily_limit:
         claims.append(budget.Claim(budget.EMBEDDINGS, 1, None, ""))
     receipt = await claim_budget(pool, claims) if claims else None
+    trace = tracing.start(
+        s, "chat", who.counter_key, question_chars=len(body.question),
+        history_turns=len(body.history), documents=len(body.document_ids or []),
+        embedding_provider=s.embedding_provider, signed_in=who.signed_in,
+    )
+    if trace:
+        trace.input = body.question
     try:
+        t0 = time.monotonic()
         query = await rag.standalone_question(request.app.state.llm, body.history, body.question)
+        if trace and body.history:
+            trace.timed("generation", "rewrite", time.monotonic() - t0, model=s.groq_model,
+                        metadata={"rewritten": query != body.question},
+                        **({"input": body.question, "output": query} if trace.content else {}))
+        t0 = time.monotonic()
         result = await retrieval.retrieve(
             pool,
             request.app.state.embedder,
@@ -364,11 +502,18 @@ async def chat(body: ChatRequest, request: Request, who: Who):
         if receipt:
             await budget.refund(pool, receipt)
         raise HTTPException(503, "Database unavailable") from exc
+    if trace:
+        trace.timed("span", "retrieval", time.monotonic() - t0, metadata={
+            "hits": len(result.hits), "top_similarity": round(result.top_similarity, 4),
+            "keyword_match": result.has_keyword_match,
+            "refused_for_low_similarity": rag.should_refuse(result, s.min_similarity),
+        }, **({"input": query, "output": [f"{h.filename} p.{h.page}" for h in result.hits]}
+              if trace.content else {}))
     stream = rag.answer_stream(
         request.app.state.llm, query, result, min_similarity=s.min_similarity
     )
     return StreamingResponse(
-        refund_if_unanswered(stream, pool, receipt),
+        tracing.traced(refund_if_unanswered(stream, pool, receipt), trace, s),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

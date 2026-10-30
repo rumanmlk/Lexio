@@ -24,7 +24,7 @@ os.environ["ALLOW_DEV_USERS"] = "true"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import auth, budget, main, rag  # noqa: E402
+from app import auth, budget, main, rag, storage  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import open_pool  # noqa: E402
 from app.errors import ProviderError  # noqa: E402
@@ -512,7 +512,7 @@ def test_migration_004_renames_public_to_samples_and_records_sizes(client):
             if data:
                 conn.execute("INSERT INTO document_files VALUES (%s, %s)", (doc, data))
 
-    assert apply_migrations(target) == ["004_owners.sql"]
+    assert apply_migrations(target) == ["004_owners.sql", "005_blob_path.sql"]
     with psycopg.connect(target) as conn:
         rows = conn.execute("SELECT owner_id, size_bytes FROM documents ORDER BY sha256").fetchall()
         assert rows == [("samples", 10), ("samples", 0)]  # no data moved; size only where known
@@ -755,3 +755,267 @@ def test_cors_allows_the_authorization_header(anon):
     )
     assert r.status_code == 200
     assert "authorization" in r.headers["access-control-allow-headers"].lower()
+
+
+# ---- direct-to-storage uploads (app/storage.py, Vercel Blob) ------------------------------
+
+
+class FakeBlob:
+    """Stands in for Vercel Blob: what the browser uploaded, and what the API deleted."""
+
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+        self.deleted: list[str] = []
+
+    def put(self, user_id: str, name: str, data: bytes) -> str:
+        path = storage.user_prefix(user_id) + name
+        self.files[path] = data
+        return path
+
+
+@pytest.fixture
+def blob(clean, monkeypatch):
+    fake = FakeBlob()
+
+    async def read(s, pathname):
+        if pathname not in fake.files:
+            raise storage.BlobMissing(pathname)
+        return fake.files[pathname]
+
+    async def open_stream(s, pathname):
+        from contextlib import AsyncExitStack
+
+        if pathname not in fake.files:
+            raise storage.BlobMissing(pathname)
+
+        async def chunks():
+            data = fake.files[pathname]
+            for i in range(0, len(data), 100_000):
+                yield data[i : i + 100_000]
+
+        return chunks(), AsyncExitStack()
+
+    async def delete(s, pathnames):
+        for p in pathnames:
+            fake.files.pop(p, None)
+            fake.deleted.append(p)
+
+    monkeypatch.setattr(storage, "read", read)
+    monkeypatch.setattr(storage, "open_stream", open_stream)
+    monkeypatch.setattr(storage, "delete", delete)
+    monkeypatch.setattr(get_settings(), "blob_read_write_token", "test-token")
+    return fake
+
+
+def register(client, path, filename="udhr.pdf"):
+    return client.post("/api/documents/register", json={"pathname": path, "filename": filename})
+
+
+def test_direct_upload_is_registered_streamed_back_and_deleted_with_its_blob(client, blob):
+    assert client.get("/api/limits").json()["direct_upload"] is True
+    assert upload(client).status_code == 400  # the multipart route is closed in this mode
+
+    path = blob.put("dev:alice", "udhr.pdf", SAMPLE.read_bytes())
+    r = register(client, path)
+    assert r.status_code == 201 and r.json()["duplicate"] is False
+    doc = r.json()["id"]
+    with psycopg.connect(get_settings().database_url) as conn:
+        assert conn.execute("SELECT blob_path FROM documents WHERE id = %s", (doc,)).fetchone() == (
+            path,
+        )
+        assert conn.execute("SELECT count(*) FROM document_files").fetchone() == (0,)
+
+    got = client.get(f"/api/documents/{doc}/file")
+    assert got.status_code == 200 and got.content == SAMPLE.read_bytes()
+    assert got.headers["cache-control"] == "private, no-store"
+    assert ask(client).status_code == 200  # the chunks are searchable like any other
+
+    assert client.delete(f"/api/documents/{doc}").status_code == 204
+    assert blob.deleted == [path]
+    assert client.get(f"/api/documents/{doc}/file").status_code == 404
+
+
+def test_register_refuses_someone_elses_or_malformed_pathnames(client, blob):
+    theirs = blob.put("dev:bob", "udhr.pdf", SAMPLE.read_bytes())
+    assert register(client, theirs).status_code == 403
+    mine = storage.user_prefix("dev:alice")
+    for bad in ("udhr.pdf", "u/x.pdf", mine + "a/b.pdf", mine + "../x.pdf", mine, mine + "x\\y"):
+        assert register(client, bad).status_code == 403, bad
+    assert register(client, mine + "missing.pdf").status_code == 404
+    assert blob.deleted == []  # nothing that was not the caller's was ever touched
+
+
+def test_register_is_anonymous_proof_and_needs_the_switch(anon, client, blob, monkeypatch):
+    assert register(anon, "u/x/y.pdf").status_code == 401
+    monkeypatch.setattr(get_settings(), "blob_read_write_token", "")
+    assert register(client, "u/x/y.pdf").status_code == 404
+
+
+def test_registering_twice_keeps_the_file_the_document_uses(client, blob):
+    path = blob.put("dev:alice", "udhr.pdf", SAMPLE.read_bytes())
+    first = register(client, path).json()
+    again = register(client, path)
+    assert again.status_code == 201 and again.json()["id"] == first["id"]
+    assert path in blob.files and blob.deleted == []
+
+
+def test_a_second_copy_of_the_same_pdf_is_dropped_and_the_first_kept(client, blob):
+    one = blob.put("dev:alice", "one.pdf", SAMPLE.read_bytes())
+    two = blob.put("dev:alice", "two.pdf", SAMPLE.read_bytes())
+    a = register(client, one).json()
+    b = register(client, two).json()
+    assert b["duplicate"] is True and b["id"] == a["id"]
+    assert blob.deleted == [two] and one in blob.files
+    assert client.get(f"/api/documents/{a['id']}/file").content == SAMPLE.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("data", "name", "status"),
+    [(b"not a pdf", "x.pdf", 415), (SAMPLE.read_bytes(), "x.txt", 415)],
+)
+def test_a_rejected_upload_is_deleted_from_storage(client, blob, data, name, status):
+    path = blob.put("dev:alice", "x.pdf", data)
+    assert register(client, path, filename=name).status_code == status
+    assert blob.deleted == [path]
+
+
+def test_a_big_pdf_is_streamed_whole_from_postgres(client, clean):
+    """The 6 MB sample is over Vercel's 4.5 MB response limit, so it must arrive in pieces."""
+    big = SAMPLE.parent / "Buyer_Guidance_-_MSC_v2.2A_2025.pdf"
+    doc = _seed_sample(big).document_id
+    r = client.get(f"/api/documents/{doc}/file")
+    assert r.content == big.read_bytes()
+    assert int(r.headers["content-length"]) == big.stat().st_size
+
+
+def test_delete_me_deletes_the_users_blobs(client, blob):
+    path = blob.put("dev:alice", "udhr.pdf", SAMPLE.read_bytes())
+    register(client, path)
+    assert client.delete("/api/me").status_code == 204
+    assert blob.deleted == [path]
+
+
+async def test_sweep_removes_old_unregistered_uploads_only(client, blob, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    old, fresh = datetime.now(UTC) - timedelta(hours=5), datetime.now(UTC)
+    kept = blob.put("dev:alice", "kept.pdf", SAMPLE.read_bytes())
+    register(client, kept)
+    stray = storage.user_prefix("dev:alice") + "stray.pdf"
+    young = storage.user_prefix("dev:alice") + "young.pdf"
+
+    class Entry:
+        def __init__(self, pathname, uploaded_at):
+            self.pathname, self.uploaded_at = pathname, uploaded_at
+
+    class Sdk:
+        async def _gen(self):
+            for e in (Entry(kept, old), Entry(stray, old), Entry(young, fresh)):
+                yield e
+
+        def query_blobs(self, prefix=None):
+            return self._gen()
+
+    monkeypatch.setattr(storage, "_blob", lambda s: Sdk())
+    pool = await open_pool(get_settings().database_url)
+    try:
+        assert await storage.sweep_orphans(pool, get_settings()) == 1
+    finally:
+        await pool.close()
+    assert blob.deleted == [stray]
+
+
+def test_upload_ticket_names_the_users_prefix_and_checks_before_any_token_exists(
+    client, anon, blob, limits
+):
+    me = storage.user_prefix("dev:alice")
+    assert client.get("/api/limits").json()["upload_prefix"] == me
+    assert anon.get("/api/limits").json()["upload_prefix"] is None
+    r = client.post("/api/upload-ticket")
+    assert r.status_code == 200
+    assert r.json() == {"prefix": me, "max_bytes": get_settings().max_upload_mb * 1024 * 1024}
+    assert anon.post("/api/upload-ticket").status_code == 401
+
+    limits(upload_ticket_limit=2, user_max_documents=1)
+    assert client.post("/api/upload-ticket").status_code == 200  # second of two today
+    assert client.post("/api/upload-ticket").status_code == 429  # third is refused with a wait
+    assert "Retry-After" in client.post("/api/upload-ticket").headers
+
+    limits(uploads_enabled=False)
+    assert client.post("/api/upload-ticket").status_code == 403
+
+
+def test_upload_ticket_refuses_a_full_account_and_a_server_without_blob(client, blob, limits):
+    limits(user_max_documents=1)
+    register(client, blob.put("dev:alice", "udhr.pdf", SAMPLE.read_bytes()))
+    assert client.post("/api/upload-ticket").status_code == 403  # already at the document cap
+    limits(blob_read_write_token="")
+    assert client.post("/api/upload-ticket").status_code == 404
+
+
+# ---- Langfuse tracing (app/tracing.py) ----------------------------------------------------
+
+
+INGEST = "https://langfuse.test/api/public/ingestion"
+
+
+@pytest.fixture
+def langfuse(limits, indexed):
+    """Tracing switched on and pointed at a mocked Langfuse. (The test client is httpx2, which
+    respx does not touch; only the app's own Langfuse calls are intercepted.)"""
+    import respx
+
+    limits(langfuse_public_key="pk-test", langfuse_secret_key="sk-test",
+           langfuse_host="https://langfuse.test")
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(INGEST).respond(207, json={"successes": [], "errors": []})
+        yield mock
+
+
+def sent_batch(mock):
+    assert mock.calls.call_count == 1
+    call = mock.calls.last
+    return json.loads(call.request.content)["batch"], call.request
+
+
+def test_a_chat_is_traced_with_numbers_and_flags_but_no_content_by_default(client, langfuse):
+    r = ask(client)
+    assert r.status_code == 200
+    batch, request = sent_batch(langfuse)
+    assert request.headers["authorization"].startswith("Basic ")
+    kinds = [e["type"] for e in batch]
+    assert kinds[0] == "trace-create" and "span-create" in kinds and "generation-create" in kinds
+    trace = batch[0]["body"]
+    assert trace["name"] == "chat" and "input" not in trace and "output" not in trace
+    meta = trace["metadata"]
+    assert meta["outcome"] in ("answered", "refused") and meta["total_ms"] >= 0
+    assert "userId" in trace and "alice" not in json.dumps(batch)  # a salted hash, not the id
+    everything = json.dumps(batch)
+    assert "notice period" not in everything and "find this" not in everything  # no content
+
+
+def test_content_is_included_only_when_asked_for(client, langfuse, limits):
+    limits(langfuse_capture_content=True)
+    ask(client)
+    batch, _ = sent_batch(langfuse)
+    trace = batch[0]["body"]
+    assert trace["input"] == "What is the notice period?" and trace["output"]
+
+
+def test_tracing_is_off_without_keys_and_a_broken_langfuse_never_breaks_a_chat(
+    client, indexed, limits
+):
+    import httpx
+    import respx
+
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(INGEST).respond(207)
+        assert ask(client).status_code == 200
+        assert route.call_count == 0  # no keys: nothing is sent
+        limits(langfuse_public_key="pk", langfuse_secret_key="sk",
+               langfuse_host="https://langfuse.test")
+        route.respond(500)
+        assert ask(client).status_code == 200
+        route.mock(side_effect=httpx.ConnectTimeout("slow"))
+        r = ask(client)
+        assert r.status_code == 200 and "event: done" in r.text

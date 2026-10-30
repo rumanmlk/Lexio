@@ -5,6 +5,17 @@ export const MIN_SECRET_LENGTH = 32;
 
 export type TokenConfig = { secret: string; issuer: string; audience: string };
 
+/** Token settings from the environment, or null when API_TOKEN_SECRET is missing or too short. */
+export function apiTokenConfig(): TokenConfig | null {
+  const secret = process.env.API_TOKEN_SECRET;
+  if (!secret || secret.length < MIN_SECRET_LENGTH) return null;
+  return {
+    secret,
+    issuer: process.env.API_TOKEN_ISSUER ?? "lexio-web",
+    audience: process.env.API_TOKEN_AUDIENCE ?? "lexio-api",
+  };
+}
+
 /** The 5-minute HS256 token the FastAPI backend verifies (see backend/app/auth.py). */
 export async function mintApiToken(
   uid: string,

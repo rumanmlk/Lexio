@@ -141,7 +141,7 @@ export default function Home() {
     setUploading(true);
     setBanner(null);
     try {
-      const r = await uploadDocument(file);
+      const r = await uploadDocument(file, limits);
       await refresh();
       if (r.sample) setBanner(`${r.filename} is one of the sample documents, so it is ready to use as it is.`);
       else if (r.duplicate) setBanner(`${r.filename} is already in your library.`);

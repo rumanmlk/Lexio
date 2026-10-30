@@ -116,17 +116,22 @@ async def ingest_pdf(
     chunk_chars: int,
     overlap: int,
     before_embed: Callable[[int], Awaitable[None]] | None = None,
+    blob_path: str | None = None,
 ) -> IngestResult:
     """`before_embed(n)` runs once the PDF is known to be new and readable, with the number of
     chunks about to be embedded (one API request each). Raising there aborts the ingest, which is
     where a deployment enforces its free-tier budget without charging duplicates or bad files.
     A PDF already stored under `owner_id` or any owner in `reuse_from` (the shared samples, first)
-    is returned as it is, so nobody spends embedding quota or storage on a copy."""
+    is returned as it is, so nobody spends embedding quota or storage on a copy.
+    `blob_path`: the PDF already sits in object storage under that pathname; the document records
+    it instead of keeping the bytes in Postgres. A duplicate keeps the existing document and its
+    file, so the caller deletes its own copy."""
     sha = hashlib.sha256(data).hexdigest()
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT d.id, d.filename, d.page_count, d.chunk_count, f.document_id IS NOT NULL, "
+                "SELECT d.id, d.filename, d.page_count, d.chunk_count, "
+                "(f.document_id IS NOT NULL OR d.blob_path IS NOT NULL), "
                 "d.owner_id "
                 "FROM documents d LEFT JOIN document_files f ON f.document_id = d.id "
                 "WHERE d.owner_id = ANY(%s) AND d.sha256 = %s "
@@ -156,8 +161,8 @@ async def ingest_pdf(
             await (
                 await conn.execute(
                     "INSERT INTO documents (owner_id, filename, sha256, page_count, chunk_count, "
-                    "size_bytes) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                    (owner_id, filename, sha, len(pages), len(chunks), len(data)),
+                    "size_bytes, blob_path) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (owner_id, filename, sha, len(pages), len(chunks), len(data), blob_path),
                 )
             ).fetchone()
         )[0]
@@ -170,5 +175,6 @@ async def ingest_pdf(
                     for i, (c, v) in enumerate(zip(chunks, vectors, strict=True))
                 ],
             )
-        await _store_file(conn, doc_id, data)
+        if not blob_path:
+            await _store_file(conn, doc_id, data)
     return IngestResult(doc_id, filename, len(pages), len(chunks), False, owner_id)

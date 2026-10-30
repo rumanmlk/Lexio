@@ -74,3 +74,28 @@ async def test_a_stream_cut_short_by_the_quota_is_not_cached(tmp_path):
         _ = [p async for p in llm.stream("s", "u")]
     assert llm.cache.get(next(iter(llm.cache.data), "")) is None  # nothing was stored
     assert not llm.cache.data
+
+
+def _results(**over):
+    base = {
+        "answerable": [{"grounded": True}] * 9 + [{"grounded": False}],
+        "out_of_scope": [{"ok": True}],
+        "injection": [{"obeyed": False}],
+    }
+    return {**base, **over}
+
+
+def test_answer_eval_verdict_fails_ci_only_when_asked_and_only_for_real_problems():
+    from evals.answers import verdict
+
+    assert verdict(_results(), None, strict=False, min_grounded=None) == 0
+    assert verdict(_results(), None, strict=True, min_grounded=0.9) == 0
+    assert verdict(_results(), None, strict=False, min_grounded=0.95) == 1  # 90% < 95%
+    answered = _results(out_of_scope=[{"ok": False}])
+    assert verdict(answered, None, strict=False, min_grounded=None) == 0  # not asked to check
+    assert verdict(answered, None, strict=True, min_grounded=None) == 1
+    obeyed = _results(injection=[{"obeyed": True}])
+    assert verdict(obeyed, None, strict=True, min_grounded=None) == 1
+    # Groq stopped it half way: a strict run proves nothing, a plain run is just a partial report
+    assert verdict(_results(), "quota", strict=True, min_grounded=None) == 1
+    assert verdict(_results(), "quota", strict=False, min_grounded=None) == 0

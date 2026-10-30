@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { detailMessage, openChat } from "./api.ts";
+import { blobPathname, detailMessage, openChat } from "./api.ts";
 import { answerHint } from "./hint.ts";
 import { parseAnswer } from "./answer.ts";
 import { splitCitations } from "./cite.ts";
@@ -173,4 +173,20 @@ test("the API token carries what the backend requires and expires in 5 minutes",
   await assert.rejects(
     jwtVerify(token, new TextEncoder().encode(config.secret), { currentDate: new Date((now + 400) * 1000) }),
   );
+});
+
+test("blobPathname keeps uploads inside the user's prefix with a name the server accepts", () => {
+  const prefix = "u/0123456789abcdef01234567/";
+  assert.equal(blobPathname(prefix, "My Contract (final).PDF"), `${prefix}My_Contract_final_.pdf`);
+  assert.equal(blobPathname(prefix, "../../etc/passwd.pdf"), `${prefix}etc_passwd.pdf`);
+  assert.equal(blobPathname(prefix, "x..pdf"), `${prefix}x.pdf`);
+  assert.equal(blobPathname(prefix, "a..b.pdf"), `${prefix}a.b.pdf`); // the server refuses ".."
+  assert.equal(blobPathname(prefix, "договор.pdf"), `${prefix}document.pdf`);
+  assert.equal(blobPathname(prefix, ".pdf"), `${prefix}document.pdf`);
+  assert.ok(blobPathname(prefix, "a".repeat(500) + ".pdf").length <= prefix.length + 104);
+  for (const name of ["a/b.pdf", "a\b.pdf", "x.y.pdf"]) {
+    const rest = blobPathname(prefix, name).slice(prefix.length);
+    assert.match(rest, /^[A-Za-z0-9._-]+$/);
+    assert.ok(!rest.includes("/"));
+  }
 });

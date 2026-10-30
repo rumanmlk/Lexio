@@ -38,7 +38,7 @@ async def main(provider: str, owner: str) -> None:
     from app.ingest import ingest_pdf
 
     s = get_settings()
-    apply_migrations(s.database_url)
+    apply_migrations(s.database_url_unpooled or s.database_url)
     pool = await open_pool(s.database_url)
     live = Counting(build_embedder(s, PATIENT))
     embedder = CachedEmbedder(live, embedding_cache(s, provider))

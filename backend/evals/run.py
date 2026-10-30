@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import statistics
+import sys
 import time
 
 from evals.common import DATASET, RESULTS, prepare, sample_pdfs
@@ -26,7 +27,9 @@ def score_item(hits, gold_doc: str, gold_pages: set[int]) -> int | None:
     return None
 
 
-async def main(provider: str, sweep: bool, reuse: bool) -> None:
+async def main(
+    provider: str, sweep: bool, reuse: bool, min_mrr: float | None = None
+) -> int:
     s, pool, embedder = await prepare(provider, reuse)
     from app.retrieval import retrieve
 
@@ -118,6 +121,11 @@ async def main(provider: str, sweep: bool, reuse: bool) -> None:
     (RESULTS / f"{provider}.md").write_text(out, encoding="utf-8", newline="\n")
     print("\n" + out)
     await pool.close()
+    default = next(mrr for label, _, mrr, _ in rows if label == "hybrid, keyword weight 1.0")
+    if min_mrr is not None and default < min_mrr:
+        print(f"FAIL: hybrid MRR {default:.3f} is below the floor {min_mrr:.3f}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
@@ -125,5 +133,7 @@ if __name__ == "__main__":
     ap.add_argument("--provider", choices=["local", "gemini", "hash"], default="local")
     ap.add_argument("--sweep", action="store_true", help="sweep refusal thresholds")
     ap.add_argument("--reuse", action="store_true", help="keep the ingested eval database")
+    ap.add_argument("--min-mrr", type=float, default=None,
+                    help="exit 1 when the default hybrid MRR is below this (for CI)")
     a = ap.parse_args()
-    asyncio.run(main(a.provider, a.sweep, a.reuse))
+    sys.exit(asyncio.run(main(a.provider, a.sweep, a.reuse, a.min_mrr)))

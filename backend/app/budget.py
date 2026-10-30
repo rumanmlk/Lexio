@@ -32,6 +32,10 @@ def visitor_uploads(visitor: str) -> str:
     return f"uploads:{visitor}"
 
 
+def visitor_tickets(visitor: str) -> str:
+    return f"tickets:{visitor}"
+
+
 @dataclass(frozen=True)
 class Claim:
     counter: str

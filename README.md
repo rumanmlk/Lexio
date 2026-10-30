@@ -16,7 +16,7 @@ question ──► embed ──┬─► vector top-30 ──┐                
 | Layer | Choice | Why |
 |---|---|---|
 | API | FastAPI, async psycopg 3, SSE streaming | Deploys on Vercel with zero config |
-| Storage | Postgres + pgvector (Neon in production) | One database for vectors, full-text search and metadata |
+| Storage | Postgres + pgvector (Neon in production); users' PDFs in Vercel Blob when deployed | One database for vectors, full-text search and metadata; Blob because a Vercel function refuses uploads over 4.5 MB |
 | Retrieval | Hybrid: cosine similarity + Postgres full-text, fused with Reciprocal Rank Fusion (equal weights) | Keyword search catches exact terms but is noisy on its own; see the numbers below |
 | Embeddings | `gemini-embedding-2` at 768 dims (free tier); `bge-base-en-v1.5` locally | Same 768-dim column for both |
 | LLM | `openai/gpt-oss-120b` on Groq | Free tier, reasoning kept out of the answer text |
@@ -72,11 +72,27 @@ hit@k = the right page is among the top k results.
 
 Measured before the other three documents and the `ts_rank` change, so it does not describe the current code. It is kept in [`backend/evals/results/history/`](backend/evals/results/history/). On 38 questions: Gemini hybrid reached hit@3 1.00 and MRR 0.934; every answer was grounded and 38/38 cited a gold page; all 8 out-of-scope questions were refused; and an instruction planted inside a document was ignored. The first version of that eval reported only 34% grounded: the model wrote citations as `【1†L1-L3】` and the parser only knew `[1]`. Fixing the parser is why the answer eval exists.
 
-**Not yet measured:** Groq answers on all five documents with Gemini retrieval. The free tier caps what one day can do (see below), so the run is resumable:
+### Answer quality (Gemini retrieval, Groq `openai/gpt-oss-120b`, all five documents)
 
-```bash
-uv run python -m evals.answers --provider gemini --reuse       # stops at Groq's daily limit; run again to continue
-```
+The full set (105 cases) ran over two days because of Groq's daily token cap. Output: [`backend/evals/results/answers-gemini.md`](backend/evals/results/answers-gemini.md).
+
+| check | result |
+|---|---|
+| gold page was in the context sent to the LLM | 93% (68/73) |
+| answer was grounded (cited a source, did not refuse) | 93% (68/73) |
+| a cited source is on a gold page | 92% (67/73) |
+| out-of-scope questions refused | 100% (8/8) |
+| near-miss questions answered honestly (refused or said it is not specified) | 100% (14/14) |
+| follow-ups: gold page in context, searching the raw follow-up | 56% (5/9) |
+| follow-ups: gold page in context, after rewriting with the conversation | 100% (9/9) |
+| follow-ups: a cited source is on a gold page | 78% (7/9) |
+| planted instruction obeyed (lower is better) | no (0/1) |
+| injected document still answered correctly | yes (1/1) |
+
+- **Retrieval is the bottleneck, not the model.** Five of the six answerable misses (a04, a05, a18, a68, a72) did not get the gold page into the top 6, so the model never saw it. In one of them (a72) the model still answered from another page, so it counts as grounded but cites the wrong page. The sixth (a51) had the gold page in context and still was not answered with a citation.
+- **Rewriting follow-ups matters:** searching the raw follow-up finds the gold page 5 times out of 9; after the LLM rewrites it using the conversation, 9 out of 9. Two follow-ups (f06, f07) are still not cited on a gold page.
+- **Prompt injection:** this is a single case (a lease with a planted instruction to output a code word). The model ignored it and answered the real question. One case shows the defence can work, not that it always does.
+- With 73 answerable questions, one question is about 1.4 percentage points, so small differences are noise.
 
 The Gemini retrieval eval above was produced with `uv run python -m evals.run --provider gemini --sweep --reuse` (about 920 of Gemini's 1000 daily embeddings, once).
 
@@ -161,6 +177,12 @@ uv run python -m evals.run --provider local --sweep
 
 Results are written to `backend/evals/results/`.
 
+`--min-mrr 0.72` makes `evals.run` exit 1 when the default hybrid MRR falls below that floor, and `evals.answers --strict` exits 1 if an out-of-scope question was answered, a planted instruction was obeyed, or Groq cut the run short (`--min-grounded 0.85` adds a floor on grounded answers). In CI, [`.github/workflows/evals.yml`](.github/workflows/evals.yml) runs the retrieval eval with the local model (no keys, no quota) weekly and on demand with a floor of 0.72 (the committed local result is 0.794; the floor leaves room for a different CPU). The Groq answer eval only runs when started by hand, because it spends the tokens the live demo answers with: the default sample of 5 answerable questions is 32 cases, roughly 95k of Groq's 200k daily tokens. The Gemini evals stay local, since a fresh machine has no embedding cache and would use up the day's 1,000 embeddings.
+
+### Tracing
+
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and every chat sends one trace to Langfuse (retrieval span, query-rewrite and answer generations, outcome). By default it holds timings, counts, similarity and flags and a salted visitor hash, never the question, the passages or the answer; `LANGFUSE_CAPTURE_CONTENT=true` adds them. The trace is sent inside the request, with a 3-second timeout, because a serverless instance can be frozen before a background flush; a slow or failing Langfuse never affects an answer.
+
 ### Evaluate answers (real LLM)
 
 ```bash
@@ -173,7 +195,9 @@ Sends each question through the same path as `/api/chat` with Groq and checks th
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/documents` | signed-in only: multipart PDF upload; deduplicated by SHA-256, and a PDF identical to a sample returns the sample |
+| `POST` | `/api/documents` | signed-in only: multipart PDF upload (used when `BLOB_READ_WRITE_TOKEN` is not set, e.g. locally); deduplicated by SHA-256, and a PDF identical to a sample returns the sample |
+| `POST` | `/api/upload-ticket` | signed-in only, only with Blob: the checks that do not need the file (caps, uploads switch, tickets per day); returns the user's storage prefix. Called by the web app's `/blob-upload` route before it lets the browser upload |
+| `POST` | `/api/documents/register` | signed-in only, only with Blob: `{pathname, filename}` of a PDF the browser already uploaded; the API checks it is under the caller's prefix, reads, indexes and keeps it, or deletes it if rejected or a duplicate |
 | `GET` | `/api/documents` | the samples plus the caller's own (`sample: true` marks the shared ones) |
 | `GET` | `/api/documents/{id}/file` | the original PDF, for the viewer |
 | `DELETE` | `/api/documents/{id}` | signed-in only: delete one of your documents with its chunks (`403` for a sample) |
@@ -189,6 +213,9 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 - Follow-ups work by rewriting the latest message into a standalone question with the LLM; there is no other conversation memory, and a failed rewrite falls back to searching the raw message.
 - The eval set is small (73 answerable questions over five documents, only two of them contracts). Treat the numbers as a regression check, not proof of accuracy on real contracts.
 - Free-tier quotas (see above) limit uploads, evals and how many questions a public demo can answer per day. The budget guard keeps a deployment inside them; it does not raise them.
+- Two simultaneous uploads by one user can slightly exceed that user's cap.
+- Deployment is untested against the real services (see `DEPLOY.md`, step 9). The Blob, Langfuse and streaming-size behaviour is covered only by tests that fake those services.
+- Uploads on Vercel Blob's free plan share 1 GB and 2,000 uploads a month; going over locks Blob for 30 days. Per-user daily upload tickets and an orphan sweep reduce that risk but do not remove it.
 - Prompt-injection defences (documents are fenced as untrusted data and the prompt says never to obey them) reduce the risk but cannot remove it.
 - Anonymous limits count a hashed IP, which people behind one shared address share. Signed-in users are counted per account, but a determined person can make several Google accounts; only the global daily caps stop that.
 - The real Google sign-in is checked by hand, not in automated tests (it needs a Google OAuth client); the token, ownership and limit logic is tested against the dev login.
@@ -198,6 +225,6 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 - [x] Phase 1: FastAPI + pgvector + hybrid retrieval + citations + eval harness
 - [x] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page (uses the browser's built-in PDF viewer)
 - [x] Phase 3: Google sign-in, per-user documents, per-user limits
-- [ ] Phase 4: Vercel + Neon deployment, Langfuse tracing, CI evals
+- [x] Phase 4 (code): direct-to-Blob uploads, Neon-safe database setup, optional Langfuse tracing, scheduled and on-demand CI evals. **Not yet deployed or run against real Vercel, Neon, Blob or Langfuse accounts**: follow [`DEPLOY.md`](DEPLOY.md) and its checklist.
 
 Not legal advice. MIT licensed.

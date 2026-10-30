@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "numpy>=2.0",
     "pyjwt>=2.9",
+    "vercel-blob>=0.5",  # only used when BLOB_READ_WRITE_TOKEN is set
 ]
 
 [dependency-groups]
@@ -28,6 +29,9 @@ dev = [
 local-embeddings = [
     "fastembed>=0.4",
 ]
+
+[tool.vercel]
+entrypoint = "index:app"
 
 [tool.uv]
 link-mode = "copy"  # uv's cache and this repo are on different drives, so hardlinks can't work

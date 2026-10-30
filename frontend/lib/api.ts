@@ -31,6 +31,10 @@ export type Limits = {
   uploads_enabled: boolean;
   max_upload_mb: number;
   max_upload_chunks: number | null;
+  /** The server keeps PDFs in object storage: upload there first, then register (see below). */
+  direct_upload: boolean;
+  /** Where this user's direct uploads go; null when not signed in or not direct. */
+  upload_prefix: string | null;
   questions: Counter;
   site_questions: Counter;
   uploads: Counter;
@@ -102,7 +106,7 @@ export async function getLimits(): Promise<Limits> {
   return (await request("/api/limits")).json();
 }
 
-export async function uploadDocument(file: File): Promise<{
+export type Uploaded = {
   id: string;
   filename: string;
   pages: number;
@@ -110,10 +114,45 @@ export async function uploadDocument(file: File): Promise<{
   duplicate: boolean;
   /** The PDF matched a shared sample, which is used as it is. */
   sample: boolean;
-}> {
+};
+
+/** A storage path under the user's prefix that the server will accept: letters, digits and . _ - */
+export function blobPathname(prefix: string, filename: string): string {
+  const stem = filename.replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.{2,}/g, ".").replace(/^[._]+|\.+$/g, "");
+  return `${prefix}${stem.slice(0, 100) || "document"}.pdf`;
+}
+
+export async function uploadDocument(
+  file: File,
+  limits?: Pick<Limits, "direct_upload" | "upload_prefix" | "max_upload_mb"> | null,
+): Promise<Uploaded> {
+  if (limits?.direct_upload && limits.upload_prefix) return uploadDirect(file, limits.upload_prefix, limits.max_upload_mb);
   const form = new FormData();
   form.append("file", file);
   return (await request("/api/documents", { method: "POST", body: form })).json();
+}
+
+/** PDF to Vercel Blob straight from the browser (the web app's /blob-upload route authorises it),
+ * then the backend is told where it is so it can check, index and keep it. */
+async function uploadDirect(file: File, prefix: string, maxMb: number): Promise<Uploaded> {
+  if (!/\.pdf$/i.test(file.name)) throw new ApiError("Only PDF files are supported", 415);
+  if (file.size > maxMb * 1024 * 1024) throw new ApiError(`File exceeds ${maxMb} MB`, 413);
+  const { upload } = await import("@vercel/blob/client");
+  let stored;
+  try {
+    stored = await upload(blobPathname(prefix, file.name), file, {
+      access: "private",
+      handleUploadUrl: "/blob-upload",
+    });
+  } catch (e) {
+    throw new ApiError((e as Error).message || "The upload failed. Try again.", 0);
+  }
+  const res = await request("/api/documents/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pathname: stored.pathname, filename: file.name }),
+  });
+  return res.json();
 }
 
 export async function deleteDocument(id: string): Promise<void> {

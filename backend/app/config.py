@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
 
     database_url: str = "postgresql://lexio:lexio@localhost:5433/lexio"
+    # Neon: DATABASE_URL is the pooled (pgbouncer) endpoint the app queries through; migrations
+    # need a real session (advisory lock), so they use this direct endpoint when it is set.
+    database_url_unpooled: str = ""
 
     embedding_provider: Literal["gemini", "local", "hash"] = "gemini"
     embedding_dim: int = 768
@@ -43,6 +46,15 @@ class Settings(BaseSettings):
     min_similarity: float | None = None
 
     max_upload_mb: int = 25
+    # Vercel Blob read-write token. When set, PDFs are uploaded by the browser straight to Blob
+    # (Vercel functions refuse request bodies over 4.5 MB), registered with POST
+    # /api/documents/register, and kept in Blob instead of Postgres. The token must belong to the
+    # same Blob store the Next.js app uploads to. Empty: PDFs go through the API into Postgres.
+    blob_read_write_token: str = ""
+    # Upload tickets a user may take per day. A ticket is permission to put one PDF in Blob;
+    # one that is never registered is junk that counts against the store's 1 GB until it is swept,
+    # so the number of tickets (not only of finished uploads) is limited. 0 turns it off.
+    upload_ticket_limit: int = 30
     cors_origins: list[str] = ["http://localhost:3000"]
 
     # Sign-in (app/auth.py). The Next.js app mints a short-lived HS256 token for the signed-in
@@ -57,6 +69,14 @@ class Settings(BaseSettings):
     # Per-user storage caps. PDFs live in Postgres, and Neon's free tier is small.
     user_max_documents: int = 10
     user_max_mb: int = 50
+
+    # Optional Langfuse tracing of chats (app/tracing.py); off unless both keys are set. Traces hold
+    # timings, counts and flags only, unless LANGFUSE_CAPTURE_CONTENT=true adds the question,
+    # answer and sources, which come from users' private documents.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_capture_content: bool = False
 
     # Free-tier guards (app/budget.py). DEMO_MODE=true is the public-demo preset: questions,
     # uploads and document length are capped (per user, or per IP for anonymous visitors, and
@@ -77,6 +97,10 @@ class Settings(BaseSettings):
     # Behind a proxy that sets X-Forwarded-For itself (Vercel does), identify visitors by it.
     trust_forwarded_for: bool = False
     visitor_salt: str = "lexio"  # visitors are stored as a salted hash of their IP, never the IP
+
+    @property
+    def blob_enabled(self) -> bool:
+        return bool(self.blob_read_write_token)
 
     @model_validator(mode="after")
     def _defaults(self):
