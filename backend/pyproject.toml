@@ -40,6 +40,7 @@ link-mode = "copy"  # uv's cache and this repo are on different drives, so hardl
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["."]  # `app` and `evals` are not installed packages; a bare `pytest` needs this
 markers = ["db: needs the local Postgres from docker-compose"]
 
 [tool.ruff]
