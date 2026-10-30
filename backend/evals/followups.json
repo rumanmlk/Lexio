@@ -1,0 +1,173 @@
+[
+ {
+  "id": "f01",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "What does the Declaration say about slavery?"
+   },
+   {
+    "role": "assistant",
+    "content": "No one shall be held in slavery or servitude; slavery and the slave trade shall be prohibited in all their forms. [1]"
+   }
+  ],
+  "question": "And what about torture?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "nooneshallbesubjectedtotortureortocruel"
+ },
+ {
+  "id": "f02",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Who is presumed innocent until proved guilty?"
+   },
+   {
+    "role": "assistant",
+    "content": "Everyone charged with a penal offence has the right to be presumed innocent until proved guilty. [1]"
+   }
+  ],
+  "question": "And can someone be punished for something that was not a crime when it happened?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "didnotconstituteapenaloffence"
+ },
+ {
+  "id": "f03",
+  "doc": "universal_declaration_of_human_rights.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "What does the Declaration say about education?"
+   },
+   {
+    "role": "assistant",
+    "content": "Everyone has the right to education, and it must aim at the full development of the human personality. [1]"
+   }
+  ],
+  "question": "Does it have to be free?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "educationshallbefree,atleastintheelementary"
+ },
+ {
+  "id": "f04",
+  "doc": "crc.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Must primary education be compulsory and free?"
+   },
+   {
+    "role": "assistant",
+    "content": "Yes, States Parties shall make primary education compulsory and available free to all. [1]"
+   }
+  ],
+  "question": "And what about secondary education?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "differentformsofsecondaryeducation"
+ },
+ {
+  "id": "f05",
+  "doc": "crc.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "At what age may children take a direct part in hostilities?"
+   },
+   {
+    "role": "assistant",
+    "content": "States Parties shall take all feasible measures so that persons under fifteen do not take a direct part in hostilities. [1]"
+   }
+  ],
+  "question": "What about recruiting them into the armed forces?",
+  "gold_pages": [
+   11
+  ],
+  "evidence": "refrainfromrecruitinganypersonwhohasnotattainedtheageoffifteen"
+ },
+ {
+  "id": "f06",
+  "doc": "crc.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Can a child express their own views in matters affecting them?"
+   },
+   {
+    "role": "assistant",
+    "content": "Yes, the child who is capable of forming his or her own views has the right to express them freely. [1]"
+   }
+  ],
+  "question": "Does that also cover religion?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "freedomofthought"
+ },
+ {
+  "id": "f07",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Under the GDPR, how soon must a controller notify the supervisory authority of a personal data breach?"
+   },
+   {
+    "role": "assistant",
+    "content": "Without undue delay and, where feasible, not later than 72 hours after becoming aware of it. [1]"
+   }
+  ],
+  "question": "And what about telling the affected individuals?",
+  "gold_pages": [
+   52
+  ],
+  "evidence": "communicatethepersonaldatabreachtothedatasubjectwithoutunduedelay"
+ },
+ {
+  "id": "f08",
+  "doc": "CELEX_32016R0679_EN_TXT.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "What is the maximum administrative fine for the most serious infringements under the GDPR?"
+   },
+   {
+    "role": "assistant",
+    "content": "Up to 20 000 000 EUR or 4% of total worldwide annual turnover, whichever is higher. [1]"
+   }
+  ],
+  "question": "And for the less serious ones?",
+  "gold_pages": [
+   82
+  ],
+  "evidence": "upto10000000eur"
+ },
+ {
+  "id": "f09",
+  "doc": "Mutual-NDA-public-2page.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Can a party assign the Mutual NDA without the other party's consent?"
+   },
+   {
+    "role": "assistant",
+    "content": "No, except in connection with a merger, reorganization, acquisition or sale of substantially all assets. [1]"
+   }
+  ],
+  "question": "What happens if someone assigns it anyway?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "anyassignmentinviolationofthissectionisnullandvoid"
+ }
+]

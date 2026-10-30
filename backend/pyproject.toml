@@ -1,0 +1,51 @@
+[project]
+name = "lexio-api"
+version = "0.2.0"
+description = "Lexio API: hybrid-retrieval RAG over legal documents with page-level citations"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "psycopg[binary,pool]>=3.2",
+    "pgvector>=0.3.6",
+    "httpx>=0.27",
+    "pypdf>=5.0",
+    "python-multipart>=0.0.12",
+    "numpy>=2.0",
+    "pyjwt>=2.9",
+    "vercel-blob>=0.5",  # only used when BLOB_READ_WRITE_TOKEN is set
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "respx>=0.21",
+    "httpx2>=2.16",  # what starlette.testclient now wants; the app itself still uses httpx
+]
+local-embeddings = [
+    "fastembed>=0.4",
+]
+
+[tool.vercel]
+entrypoint = "index:app"
+
+[tool.uv]
+link-mode = "copy"  # uv's cache and this repo are on different drives, so hardlinks can't work
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]  # `app` and `evals` are not installed packages; a bare `pytest` needs this
+markers = ["db: needs the local Postgres from docker-compose"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

@@ -1,0 +1,42 @@
+# Secrets and local config. Only .env.example is meant to be public.
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node / Next.js / Vercel (frontend, phase 2)
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local data and caches
+vectorstore/
+uploads/
+*.log
+.cache/
+
+# Editor, OS, and AI-tool files that are only for me
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
+CLAUDE.md
+AGENTS.md
+scratch/
+notes/
+*.local.md
+
+# eval caches
+backend/evals/.cache/
