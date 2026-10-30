@@ -103,7 +103,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
    | `API_TOKEN_SECRET` | the **same** value as the API's |
 
    Do not set `AUTH_URL`: on Vercel, Auth.js trusts the platform's host. A production build also has no dev login (the provider is only added under `next dev`).
-4. Copy the `BLOB_READ_WRITE_TOKEN` value from the web project's settings into the **API** project's environment (same name). The API reads and deletes PDFs with it, so it must be the token of the *same* store the web app uploads to.
+4. Give the **API** project the same Blob token. Easiest: open the Blob store, go to its **Projects** tab and connect it to `lexio-api` as well, which adds the same `BLOB_READ_WRITE_TOKEN` there. If that is not offered, copy the value from the web project's environment variables into the API project by hand. The API reads and deletes PDFs with it, so it must be the token of the *same* store the web app uploads to.
 5. Redeploy **both** projects (the API to pick up the token, the web app to bake in the API URL).
 
 ## 7. Seed the sample documents
