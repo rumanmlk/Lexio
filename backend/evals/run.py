@@ -14,9 +14,18 @@ import statistics
 import sys
 import time
 
-from evals.common import DATASET, RESULTS, prepare, sample_pdfs
+from evals.common import (
+    DATASET,
+    RESULTS,
+    bootstrap_ci,
+    paired_diff_ci,
+    prepare,
+    sample_pdfs,
+    wilson,
+)
 
 KS = (1, 3, 6)
+DEFAULT_MODE = "hybrid, keyword weight 1.0"
 
 
 def score_item(hits, gold_doc: str, gold_pages: set[int]) -> int | None:
@@ -65,7 +74,8 @@ async def main(
                 sims["answerable"].append((res.top_similarity, res.has_keyword_match))
         hit = {k: sum(1 for r in ranks if r and r <= k) / len(ranks) for k in KS}
         mrr = sum(1 / r for r in ranks if r) / len(ranks)
-        rows.append((label, hit, mrr, statistics.median(latencies) * 1000))
+        reciprocal = [1 / r if r else 0.0 for r in ranks]
+        rows.append((label, hit, mrr, statistics.median(latencies) * 1000, ranks, reciprocal))
 
     for it in unanswerable:
         res = await retrieve(pool, embedder, it["question"], owners=["eval"], mode="hybrid",
@@ -87,10 +97,37 @@ async def main(
         "| mode | hit@1 | hit@3 | hit@6 | MRR | median ms (database only) |",
         "|---|---|---|---|---|---|",
     ]
-    for mode, hit, mrr, ms in rows:
+    for mode, hit, mrr, ms, _, _ in rows:
         lines.append(
             f"| {mode} | {hit[1]:.2f} | {hit[3]:.2f} | {hit[6]:.2f} | {mrr:.3f} | {ms:.0f} |"
         )
+    n = len(answerable)
+    lines += [
+        "",
+        f"## How far to trust these numbers ({n} questions)",
+        "",
+        "95% confidence intervals: Wilson for the hit rates, a bootstrap over questions for MRR. "
+        "Two rows whose intervals overlap are not reliably different.",
+        "",
+        "| mode | hit@1 | hit@3 | hit@6 | MRR |",
+        "|---|---|---|---|---|",
+    ]
+    for mode, _, _, _, ranks, rr in rows:
+        cells = []
+        for k in KS:
+            lo, hi = wilson(sum(1 for r in ranks if r and r <= k), n)
+            cells.append(f"{lo:.2f}-{hi:.2f}")
+        lo, hi = bootstrap_ci(rr)
+        lines.append(f"| {mode} | {' | '.join(cells)} | {lo:.3f}-{hi:.3f} |")
+    base = next(r for r in rows if r[0] == DEFAULT_MODE)
+    lines += ["", f"Paired difference in MRR, `{DEFAULT_MODE}` minus each other mode "
+              "(positive: the default is better; an interval that contains 0 means no reliable "
+              "difference):", ""]
+    for other in rows:
+        if other is base:
+            continue
+        d, lo, hi = paired_diff_ci(base[5], other[5])
+        lines.append(f"- vs {other[0]}: {d:+.3f} (95% CI {lo:+.3f} to {hi:+.3f})")
     lines += [
         "",
         "## Refusal gate (hybrid)",
@@ -121,7 +158,7 @@ async def main(
     (RESULTS / f"{provider}.md").write_text(out, encoding="utf-8", newline="\n")
     print("\n" + out)
     await pool.close()
-    default = next(mrr for label, _, mrr, _ in rows if label == "hybrid, keyword weight 1.0")
+    default = next(r[2] for r in rows if r[0] == DEFAULT_MODE)
     if min_mrr is not None and default < min_mrr:
         print(f"FAIL: hybrid MRR {default:.3f} is below the floor {min_mrr:.3f}", file=sys.stderr)
         return 1

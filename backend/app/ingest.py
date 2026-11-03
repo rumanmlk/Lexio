@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 import numpy as np
+import psycopg
 from psycopg_pool import AsyncConnectionPool
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
@@ -116,6 +117,7 @@ async def ingest_pdf(
     chunk_chars: int,
     overlap: int,
     before_embed: Callable[[int], Awaitable[None]] | None = None,
+    before_insert: Callable[[psycopg.AsyncConnection], Awaitable[None]] | None = None,
     blob_path: str | None = None,
 ) -> IngestResult:
     """`before_embed(n)` runs once the PDF is known to be new and readable, with the number of
@@ -123,6 +125,10 @@ async def ingest_pdf(
     where a deployment enforces its free-tier budget without charging duplicates or bad files.
     A PDF already stored under `owner_id` or any owner in `reuse_from` (the shared samples, first)
     is returned as it is, so nobody spends embedding quota or storage on a copy.
+    `before_insert(conn)` runs inside the saving transaction, after this owner's other saves have
+    finished (they are serialised by a per-owner lock) and after an identical PDF has been ruled
+    out again: the place to re-check caps that other uploads may have used up while this one was
+    being embedded. Raising there rolls the save back.
     `blob_path`: the PDF already sits in object storage under that pathname; the document records
     it instead of keeping the bytes in Postgres. A duplicate keeps the existing document and its
     file, so the caller deletes its own copy."""
@@ -157,6 +163,25 @@ async def ingest_pdf(
     vectors = await embedder.embed_documents([c.content for c in chunks])
 
     async with pool.connection() as conn, conn.transaction():
+        # One save at a time per owner. Without it two uploads that both passed the checks above
+        # (they ran before the slow embedding step) would both be stored, over the user's caps,
+        # or the second of two identical PDFs would hit the unique index and fail with a 500.
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"docs:{owner_id}",)
+        )
+        twin = await (
+            await conn.execute(
+                "SELECT id, filename, page_count, chunk_count FROM documents "
+                "WHERE owner_id = %s AND sha256 = %s",
+                (owner_id, sha),
+            )
+        ).fetchone()
+        if twin:  # the same PDF finished saving while this one was being embedded
+            return IngestResult(
+                twin[0], twin[1], twin[2], twin[3], duplicate=True, owner_id=owner_id
+            )
+        if before_insert:
+            await before_insert(conn)
         doc_id = (
             await (
                 await conn.execute(

@@ -169,5 +169,43 @@
    2
   ],
   "evidence": "anyassignmentinviolationofthissectionisnullandvoid"
+ },
+ {
+  "id": "f10",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Within how many hours must the Provider notify the Customer of a Security Incident under the Data Processing Agreement?"
+   },
+   {
+    "role": "assistant",
+    "content": "No later than 72 hours after becoming aware of the Security Incident. [1]"
+   }
+  ],
+  "question": "And does that notification mean the Provider admits fault?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "willnotbeconstruedasanacknowledgmentbyproviderofanyfault"
+ },
+ {
+  "id": "f11",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "history": [
+   {
+    "role": "user",
+    "content": "Can the Provider use subcontractors under the Professional Services Agreement?"
+   },
+   {
+    "role": "assistant",
+    "content": "Only with the Customer's prior permission, although the Provider may use its Affiliates without it. [1]"
+   }
+  ],
+  "question": "Who is responsible if a subcontractor fails to comply?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "providerisresponsiblefor(a)allactsandomissionsofitssubcontractors"
  }
 ]

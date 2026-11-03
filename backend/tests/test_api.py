@@ -1019,3 +1019,66 @@ def test_tracing_is_off_without_keys_and_a_broken_langfuse_never_breaks_a_chat(
         route.mock(side_effect=httpx.ConnectTimeout("slow"))
         r = ask(client)
         assert r.status_code == 200 and "event: done" in r.text
+
+
+# ---- two uploads at once (the cap is checked before the slow embedding step) ---------------
+
+
+class SlowEmbedder:
+    """Holds every upload in the embedding step long enough for a second one to arrive."""
+
+    def __init__(self, inner, delay=0.6):
+        self.inner, self.delay = inner, delay
+
+    async def embed_documents(self, texts):
+        await asyncio.sleep(self.delay)
+        return await self.inner.embed_documents(texts)
+
+    async def embed_query(self, text):
+        return await self.inner.embed_query(text)
+
+
+def upload_together(client, *paths):
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(len(paths)) as pool:
+        return list(pool.map(lambda p: upload(client, p), paths))
+
+
+def stored(client_path="documents"):
+    with psycopg.connect(get_settings().database_url) as conn:
+        return conn.execute("SELECT count(*) FROM documents").fetchone()[0]
+
+
+def test_two_simultaneous_uploads_cannot_exceed_the_document_cap(client, limits, swap_state):
+    limits(user_max_documents=1)
+    swap_state("embedder", SlowEmbedder(main.app.state.embedder))
+    first, second = upload_together(client, SAMPLE, OTHER)
+    assert sorted([first.status_code, second.status_code]) == [201, 403]
+    assert stored(client) == 1
+    assert "keep 1 documents" in (first if first.status_code == 403 else second).json()["detail"]
+
+
+def test_two_simultaneous_uploads_cannot_exceed_the_storage_cap(client, limits, swap_state):
+    a, b = SAMPLE.stat().st_size, OTHER.stat().st_size
+    limits(user_max_mb=(max(a, b) + a + b) / 2 / 1024 / 1024)  # fits either alone, not both
+    swap_state("embedder", SlowEmbedder(main.app.state.embedder))
+    first, second = upload_together(client, SAMPLE, OTHER)
+    assert sorted([first.status_code, second.status_code]) == [201, 403]
+    assert stored(client) == 1
+
+
+def test_the_loser_of_a_race_gets_its_daily_upload_back(client, limits, swap_state):
+    limits(user_max_documents=1, visitor_upload_limit=5)
+    swap_state("embedder", SlowEmbedder(main.app.state.embedder))
+    upload_together(client, SAMPLE, OTHER)
+    assert used(client, "uploads") == 1  # one document stored, one upload counted
+
+
+def test_the_same_pdf_uploaded_twice_at_once_is_one_document_not_a_500(client, limits, swap_state):
+    swap_state("embedder", SlowEmbedder(main.app.state.embedder))
+    first, second = upload_together(client, SAMPLE, SAMPLE)
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert sorted([first.json()["duplicate"], second.json()["duplicate"]]) == [False, True]
+    assert stored(client) == 1

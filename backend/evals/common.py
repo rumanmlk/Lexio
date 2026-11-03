@@ -3,7 +3,9 @@ on-disk caches so a free-tier quota is never spent twice on the same work."""
 
 import hashlib
 import json
+import math
 import os
+import random
 import time
 from pathlib import Path
 
@@ -27,6 +29,43 @@ PATIENT = RetryPolicy(attempts=8, backoff=4.0, max_wait=70.0)
 
 def sample_pdfs() -> list[Path]:
     return sorted(SAMPLES.glob("*.pdf"))
+
+
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for k successes in n trials. Unlike the textbook normal interval it
+    stays inside 0..1 and behaves at 0% and 100%, which is where small eval sets end up."""
+    if n == 0:
+        return 0.0, 1.0
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def share(k: int, n: int) -> str:
+    """"93% (68/73, 95% CI 85%-97%)": a rate with how far to trust it."""
+    if n == 0:
+        return "not run yet"
+    lo, hi = wilson(k, n)
+    return f"{k / n:.0%} ({k}/{n}, 95% CI {lo:.0%}-{hi:.0%})"
+
+
+def bootstrap_ci(values: list[float], reps: int = 4000, seed: int = 0) -> tuple[float, float]:
+    """95% percentile bootstrap interval for the mean of `values` (resampling questions)."""
+    rng = random.Random(seed)
+    n = len(values)
+    means = sorted(sum(rng.choices(values, k=n)) / n for _ in range(reps))
+    return means[int(0.025 * reps)], means[int(0.975 * reps) - 1]
+
+
+def paired_diff_ci(a: list[float], b: list[float], reps: int = 4000, seed: int = 0):
+    """Mean of a-b with its 95% bootstrap interval. Both lists score the same questions, so
+    resampling the differences removes the question-to-question variation: the right way to ask
+    whether one retrieval mode really beats another."""
+    diffs = [x - y for x, y in zip(a, b, strict=True)]
+    lo, hi = bootstrap_ci(diffs, reps, seed)
+    return sum(diffs) / len(diffs), lo, hi
 
 
 def _digest(*parts: str) -> str:

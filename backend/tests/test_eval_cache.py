@@ -99,3 +99,35 @@ def test_answer_eval_verdict_fails_ci_only_when_asked_and_only_for_real_problems
     # Groq stopped it half way: a strict run proves nothing, a plain run is just a partial report
     assert verdict(_results(), "quota", strict=True, min_grounded=None) == 1
     assert verdict(_results(), "quota", strict=False, min_grounded=None) == 0
+
+
+def test_wilson_interval_matches_known_values_and_stays_inside_0_to_1():
+    from evals.common import wilson
+
+    lo, hi = wilson(68, 73)  # the answer eval's grounded rate: 93%
+    assert (round(lo, 3), round(hi, 3)) == (0.849, 0.970)
+    assert wilson(0, 10)[0] == 0.0 and round(wilson(0, 10)[1], 3) == 0.278
+    assert wilson(10, 10)[1] == 1.0 and round(wilson(10, 10)[0], 3) == 0.722
+    assert wilson(0, 0) == (0.0, 1.0)
+
+
+def test_share_formats_a_rate_with_its_interval():
+    from evals.common import share
+
+    assert share(68, 73) == "93% (68/73, 95% CI 85%-97%)"
+    assert share(0, 0) == "not run yet"
+
+
+def test_bootstrap_intervals_cover_the_mean_and_shrink_with_more_questions():
+    from evals.common import bootstrap_ci, paired_diff_ci
+
+    few = [1.0, 0.0] * 10
+    many = [1.0, 0.0] * 200
+    (lo1, hi1), (lo2, hi2) = bootstrap_ci(few), bootstrap_ci(many)
+    assert lo1 < 0.5 < hi1 and lo2 < 0.5 < hi2
+    assert (hi2 - lo2) < (hi1 - lo1)
+    assert bootstrap_ci(few) == bootstrap_ci(few)  # seeded: the same report every time
+    d, lo, hi = paired_diff_ci([1.0, 1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 1.0])
+    assert d == 0.25 and lo <= d <= hi
+    same, lo, hi = paired_diff_ci([0.5, 1.0, 0.0], [0.5, 1.0, 0.0])
+    assert same == 0.0 and lo == 0.0 == hi  # identical modes: no difference at all

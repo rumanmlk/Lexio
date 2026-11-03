@@ -854,5 +854,359 @@
   "question": "What is the maximum number of years a Model Services Contract can run?",
   "answerable": false,
   "kind": "near_miss"
+ },
+ {
+  "id": "a74",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "Under the Cloud Service Agreement, within how many days must the Provider delete Customer Content after termination if the Customer asks?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "providerwilldeletecustomercontentwithin60days",
+  "answerable": true
+ },
+ {
+  "id": "a75",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "After how many days of an unpaid, undisputed balance may the Provider suspend a Customer's access under the Cloud Service Agreement?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "hasanoutstanding,undisputedbalanceonitsaccountformorethan30days",
+  "answerable": true
+ },
+ {
+  "id": "a76",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "How long must a Force Majeure Event prevent the Cloud Service from operating before a party can terminate an Order Form?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "preventstheproductfrommateriallyoperatingfor30ormoreconsecutivedays",
+  "answerable": true
+ },
+ {
+  "id": "a77",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "By when must a Customer report a breach of the Cloud Service Agreement's warranty about the general functionality of the Cloud Service?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "within45daysofdiscoveringtheissue",
+  "answerable": true
+ },
+ {
+  "id": "a78",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "When may a party assign the Cloud Service Agreement without the other party's consent?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "eitherpartymayassignthisagreementuponnoticeiftheassigningpartyundergoesamerger",
+  "answerable": true
+ },
+ {
+  "id": "a79",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "Does the Cloud Service Agreement let the Customer run security or vulnerability tests on the product?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "conductsecurityorvulnerabilitytestson",
+  "answerable": true
+ },
+ {
+  "id": "a80",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "Can the Provider use the Customer's name and logo in its marketing under the Cloud Service Agreement?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "providermayidentifycustomeranduse",
+  "answerable": true
+ },
+ {
+  "id": "a81",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "Which international sales convention does the Cloud Service Agreement say does not apply?",
+  "gold_pages": [
+   10
+  ],
+  "evidence": "unitednationsconventionfortheinternationalsaleofgoods",
+  "answerable": true
+ },
+ {
+  "id": "a82",
+  "doc": "common-paper-cloud-service-agreement-v3.0.pdf",
+  "question": "How does the Cloud Service Agreement define a High Risk Activity?",
+  "gold_pages": [
+   11
+  ],
+  "evidence": "couldbereasonablyexpectedtoleadtodeath,bodilyinjury,orenvironmentaldamage",
+  "answerable": true
+ },
+ {
+  "id": "a83",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "Within how many hours must the Provider notify the Customer of a Security Incident under the Data Processing Agreement?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "nolaterthan72hoursafterbecomingawareofthesecurityincident",
+  "answerable": true
+ },
+ {
+  "id": "a84",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "How many business days in advance must the Provider tell the Customer about a change of approved subprocessors under the Data Processing Agreement?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "atleast10businessdaysinadvanceandinwritingofanyintendedchanges",
+  "answerable": true
+ },
+ {
+  "id": "a85",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "How many days does the Customer have to object to a change of approved subprocessors under the Data Processing Agreement?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "customerhas30daysafternoticeofachangetotheapprovedsubprocessorstoobject",
+  "answerable": true
+ },
+ {
+  "id": "a86",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "How long must the Provider keep records of its compliance with the Data Processing Agreement?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "for3yearsafterthedpaends",
+  "answerable": true
+ },
+ {
+  "id": "a87",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "How often may the Customer send security due diligence questionnaires to the Provider under the Data Processing Agreement?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "mayonlybemadeonceayear",
+  "answerable": true
+ },
+ {
+  "id": "a88",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "If the EEA standard contractual clauses, the Data Processing Agreement and the main agreement conflict, which one controls?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "thepartlistedearlierwillcontroloverthepartlistedlater",
+  "answerable": true
+ },
+ {
+  "id": "a89",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "Which module of the EEA standard contractual clauses applies when the Customer is a Processor and the Provider is a Subprocessor?",
+  "gold_pages": [
+   6
+  ],
+  "evidence": "modulethree(processortosub-processor)oftheeeasccsapply",
+  "answerable": true
+ },
+ {
+  "id": "a90",
+  "doc": "common-paper-data-processing-agreement-v1.1.pdf",
+  "question": "What must the Provider do with Customer Personal Data after the Data Processing Agreement expires?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "providerwillreturnordeletecustomerpersonaldataat",
+  "answerable": true
+ },
+ {
+  "id": "a91",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "Under the Professional Services Agreement, can the Provider use its Affiliates to perform Services without the Customer's permission?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "providermayuseitsaffiliatestoperformserviceswithout",
+  "answerable": true
+ },
+ {
+  "id": "a92",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "Who owns the Deliverables under the Professional Services Agreement?",
+  "gold_pages": [
+   7
+  ],
+  "evidence": "providerassignsallright,title,andinterestinthedeliverables",
+  "answerable": true
+ },
+ {
+  "id": "a93",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "What must the Provider do under the Professional Services Agreement if the Deliverables do not conform to the SOW?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "providerwillreperformtheservices",
+  "answerable": true
+ },
+ {
+  "id": "a94",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "When may either party end the Professional Services Agreement for any or no reason?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "foranyornoreasoniftherearenoactivesows",
+  "answerable": true
+ },
+ {
+  "id": "a95",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "For how long after the term must insurance be carried under the Professional Services Agreement?",
+  "gold_pages": [
+   9
+  ],
+  "evidence": "andforsixmonthsafter,eachpartywillcarrycommercialinsurance",
+  "answerable": true
+ },
+ {
+  "id": "a96",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "Which party may assign the Professional Services Agreement if it undergoes a merger or change of control?",
+  "gold_pages": [
+   9
+  ],
+  "evidence": "customermayassignthisagreementuponnoticeifcustomerundergoesamerger",
+  "answerable": true
+ },
+ {
+  "id": "a97",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "May either party publicly announce the Professional Services Agreement?",
+  "gold_pages": [
+   9
+  ],
+  "evidence": "neitherpartymaypubliclyannouncetheexistenceofthisagreement",
+  "answerable": true
+ },
+ {
+  "id": "a98",
+  "doc": "common-paper-professional-services-agreement-v1.1.pdf",
+  "question": "How long does the Professional Services Agreement last?",
+  "gold_pages": [
+   8
+  ],
+  "evidence": "until12monthshaveelapsedsincetheendofthelatestsowtermenddate",
+  "answerable": true
+ },
+ {
+  "id": "a99",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "Can the Provider use Usage Data to train machine learning models under the Software License Agreement?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "develop,train,orenhanceartificialintelligenceormachinelearningmodels",
+  "answerable": true
+ },
+ {
+  "id": "a100",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "What must the Provider make available about open source components under the Software License Agreement?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "willmakeavailablealistofopensourcesoftwarecontainedintheparticularversion",
+  "answerable": true
+ },
+ {
+  "id": "a101",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "What does the Provider warrant about the Software under the Software License Agreement?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "thesoftwarewillsubstantiallyconforminallmaterialrespectstothespecificationssetforthinthedocumentation",
+  "answerable": true
+ },
+ {
+  "id": "a102",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "What remedies must the Provider give for defective Software under the Software License Agreement?",
+  "gold_pages": [
+   2
+  ],
+  "evidence": "repairorreplacinganydamagedordefectivesoftware",
+  "answerable": true
+ },
+ {
+  "id": "a103",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "May the Customer publish the results of performance tests of the Software under the Software License Agreement?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "theresultsofanyperformanceorfunctionalevaluationoftheproduct",
+  "answerable": true
+ },
+ {
+  "id": "a104",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "What must the Customer do with Updates under the Software License Agreement?",
+  "gold_pages": [
+   1
+  ],
+  "evidence": "customerwillinstallallupdatesassoonaspracticableafterreceipt",
+  "answerable": true
+ },
+ {
+  "id": "a105",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "Which claims are not subject to the damages waiver in the Software License Agreement?",
+  "gold_pages": [
+   3
+  ],
+  "evidence": "doesnotapplytoanyincreasedclaims,anybreachofsection9",
+  "answerable": true
+ },
+ {
+  "id": "a106",
+  "doc": "common-paper-software-license-agreement-v1.0.pdf",
+  "question": "Can the Provider make public announcements about the Customer under the Software License Agreement?",
+  "gold_pages": [
+   4
+  ],
+  "evidence": "providermaynototherwisemakeanypublicannouncementsreferencingcustomer",
+  "answerable": true
+ },
+ {
+  "id": "n15",
+  "question": "What is the maximum number of subprocessors the Provider may use under the Data Processing Agreement?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n16",
+  "question": "What interest rate applies to late payments under the Professional Services Agreement?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n17",
+  "question": "How many users may use the Software under the Software License Agreement?",
+  "answerable": false,
+  "kind": "near_miss"
+ },
+ {
+  "id": "n18",
+  "question": "What is the penalty for late delivery of Deliverables under the Professional Services Agreement?",
+  "answerable": false,
+  "kind": "near_miss"
  }
 ]

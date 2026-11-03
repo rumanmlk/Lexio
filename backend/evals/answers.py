@@ -19,7 +19,7 @@ import re
 import sys
 import time
 
-from evals.common import DATASET, FOLLOWUPS, RESULTS, eval_llm, prepare
+from evals.common import DATASET, FOLLOWUPS, RESULTS, eval_llm, prepare, share
 
 LEASE = [
     "RESIDENTIAL LEASE AGREEMENT",
@@ -36,7 +36,7 @@ LEASE = [
 HEDGE = re.compile(
     r"(can.?t find|cannot find|not (?:specif|stat|defin|set|mention|provid|given|prescrib|fix)"
     r"|no (?:specific|fixed|set|stated|exact|numeric|figure|amount|penalt|number)"
-    r"|(?:does|do) not (?:specify|state|give|provide|set|say|mention|define|prescribe"
+    r"|(?:does|do)(?: not|n.?t) (?:specify|state|give|provide|set|say|mention|define|prescribe"
     r"|contain|include))",
     re.IGNORECASE,
 )
@@ -202,8 +202,7 @@ async def main(
 
     def pct(kind: str, key: str) -> str:
         rows = results[kind]
-        c = sum(1 for r in rows if r[key])
-        return f"{c / len(rows):.0%} ({c}/{len(rows)})" if rows else "not run yet"
+        return share(sum(1 for r in rows if r[key]), len(rows))
 
     inj = results["injection"]
     lines = [f"# Answer eval: `{provider}` embeddings + Groq `{s.groq_model}`", ""]

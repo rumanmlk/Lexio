@@ -55,3 +55,34 @@ def test_dataset_has_all_kinds_and_unique_ids():
     assert any(not i["answerable"] and "kind" not in i for i in ITEMS)  # out of scope
     assert any(i.get("kind") == "near_miss" for i in ITEMS)
     assert any(i["answerable"] for i in ITEMS)
+
+
+# Near-miss questions that name one agreement: the topic must be absent from THAT agreement
+# (it may well appear in another document, which is part of what the question tests).
+NEAR_MISS_ABSENT = {
+    "common-paper-data-processing-agreement-v1.1.pdf": [
+        "maximumnumberofsubprocessors", "limitthenumberofsubprocessors",
+    ],
+    "common-paper-professional-services-agreement-v1.1.pdf": [
+        "interestrate", "interestonlate", "latedelivery", "liquidateddamages",
+    ],
+    "common-paper-software-license-agreement-v1.0.pdf": [
+        "numberofusers", "maximumnumberofusers", "peruser",
+    ],
+}
+
+
+def test_new_near_miss_topics_are_absent_from_the_agreement_they_name():
+    for doc, phrases in NEAR_MISS_ABSENT.items():
+        text = " ".join(pages(doc))
+        for phrase in phrases:
+            assert phrase not in text, (doc, phrase)
+
+
+def test_every_converted_agreement_states_its_licence_and_is_listed_in_the_notice():
+    notice = (SAMPLES / "NOTICE.md").read_text(encoding="utf-8")
+    for pdf in sample_pdfs():
+        if pdf.name.startswith("common-paper-"):
+            # each document states its own licence
+            assert "ccby4.0" in _squash(" ".join(pages(pdf.name))), pdf.name
+            assert pdf.name in notice, pdf.name

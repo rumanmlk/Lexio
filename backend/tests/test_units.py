@@ -180,7 +180,7 @@ def test_settings_presets_for_the_free_tier():
 
     demo = Settings(embedding_provider="gemini", demo_mode=True, _env_file=None)
     assert demo.uploads_enabled and demo.embed_daily_limit == 1000
-    assert (demo.question_daily_limit, demo.visitor_question_limit) == (60, 10)
+    assert (demo.question_daily_limit, demo.visitor_question_limit) == (80, 10)
     assert (demo.visitor_upload_limit, demo.max_upload_chunks) == (2, 150)
 
     custom = Settings(embedding_provider="gemini", demo_mode=True, uploads_enabled=True,
@@ -190,4 +190,4 @@ def test_settings_presets_for_the_free_tier():
     assert custom.embed_query_reserve == 60  # clamped so a small limit still allows uploads
     off = Settings(embedding_provider="hash", demo_mode=True, visitor_question_limit=0,
                    _env_file=None)
-    assert off.visitor_question_limit is None and off.question_daily_limit == 60  # 0 = off
+    assert off.visitor_question_limit is None and off.question_daily_limit == 80  # 0 = off

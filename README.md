@@ -26,82 +26,91 @@ Chunks and citations are the product. If the best chunk's cosine similarity is b
 
 ## Measured results
 
-Five public documents, 73 answerable questions with a verified gold page each, 8 clearly out-of-scope questions, 14 "near-miss" questions (on-topic, but the document gives no such detail) and 9 follow-ups. A test checks every gold page against the PDFs. Sources and licences: [`data/samples/NOTICE.md`](data/samples/NOTICE.md).
+Nine public documents (five of them standard contract templates), 106 answerable questions with a verified gold page each, 8 clearly out-of-scope questions, 18 "near-miss" questions (on-topic, but the document gives no such detail) and 11 follow-ups. A test checks every gold page against the PDFs. Sources and licences: [`data/samples/NOTICE.md`](data/samples/NOTICE.md).
 
 | Document | Pages | Chunks |
 |---|---|---|
 | Universal Declaration of Human Rights | 8 | 14 |
 | UN Convention on the Rights of the Child | 15 | 55 |
 | Common Paper Mutual NDA | 2 | 9 |
+| Common Paper Cloud Service Agreement 3.0 | 11 | 54 |
+| Common Paper Data Processing Agreement 1.1 | 9 | 34 |
+| Common Paper Professional Services Agreement 1.1 | 11 | 49 |
+| Common Paper Software License Agreement 1.0 | 5 | 34 |
 | GDPR (Regulation 2016/679) | 88 | 405 |
 | UK Model Services Contract, guidance for authorities | 132 | 325 |
 
-### Retrieval (local `bge-base-en-v1.5` embeddings, all five documents)
+### Retrieval (local `bge-base-en-v1.5` embeddings, all nine documents)
 
 hit@k = the right page is among the top k results.
 
 | retrieval | hit@1 | hit@3 | hit@6 | MRR |
 |---|---|---|---|---|
-| vector only | 0.66 | 0.84 | 0.88 | 0.752 |
-| keyword only | 0.74 | 0.82 | 0.89 | 0.786 |
-| hybrid, equal weights (default) | 0.74 | 0.82 | 0.90 | 0.794 |
-| hybrid, keyword weight 0.25 | 0.66 | 0.86 | 0.89 | 0.755 |
+| vector only | 0.60 | 0.79 | 0.88 | 0.710 |
+| keyword only | 0.66 | 0.78 | 0.87 | 0.728 |
+| hybrid, equal weights (default) | 0.67 | 0.78 | 0.91 | 0.743 |
+| hybrid, keyword weight 0.5 | 0.64 | 0.80 | 0.91 | 0.733 |
+| hybrid, keyword weight 0.25 | 0.62 | 0.83 | 0.90 | 0.727 |
 
-- **The keyword ranking function mattered more than any weight.** The first version ranked keyword matches with `ts_rank_cd` (cover density). On the five-document corpus it scored MRR 0.539 on its own and dragged hybrid below plain vector search (0.720 vs 0.752). Switching to `ts_rank` (term frequency), which suits questions whose words are OR-ed together, lifted keyword-only to 0.786 and hybrid to 0.794. The ranking was chosen by comparing variants offline on this same question set, so treat the gain as indicative.
-- Hybrid's edge over the better single signal is small here (0.794 vs 0.786). Its value is robustness: it does not depend on either signal being good on a given question.
-- **The similarity refusal gate does not separate cleanly on this larger corpus with the local model**: answerable questions score down to 0.557 while out-of-scope ones reach 0.641, so any threshold trades missed refusals against wrong ones (at 0.55: 62% of out-of-scope questions refused, no wrong refusals). The near-miss questions are on-topic, so no similarity threshold can catch them; the model has to, and the answer eval measures that.
+- **The keyword ranking function mattered more than any weight.** The first version ranked keyword matches with `ts_rank_cd` (cover density). On the original five-document set (73 questions) it scored MRR 0.539 on its own and dragged hybrid below plain vector search (0.720 vs 0.752). Switching to `ts_rank` (term frequency), which suits questions whose words are OR-ed together, lifted keyword-only to 0.786 and hybrid to 0.794 there. That is a large effect, well outside the noise. The ranking was chosen by comparing variants offline on that same question set, so treat the size of the gain as indicative.
+- **Nothing here reliably separates the retrieval modes.** Hybrid's MRR is ahead of keyword-only by +0.016 (95% CI -0.037 to +0.071) and of vector-only by +0.033 (95% CI -0.021 to +0.087); both intervals contain 0, and so do its differences from the lower keyword weights. On the original 73 questions hybrid looked reliably better than the lower weights (+0.034, 95% CI +0.006 to +0.067); that edge did not survive adding 33 questions and four documents, which is a reminder of how little a small set can settle. Hybrid is kept for robustness: it does not depend on either signal being good on a given question.
+- **The similarity refusal gate does not separate cleanly with the local model**: answerable questions score down to 0.557 while out-of-scope ones reach 0.648, so any threshold trades missed refusals against wrong ones (at 0.55: 50% of out-of-scope questions refused, no wrong refusals; at 0.60: 75% refused and 7% of answerable questions wrongly refused; at 0.65 every out-of-scope question is refused but 19% of answerable ones are too). The default stays at 0.5, which refuses nothing wrongly. The near-miss questions are on-topic, so no similarity threshold can catch them; the model has to, and the answer eval measures that.
 - Full output: [`backend/evals/results/local.md`](backend/evals/results/local.md).
 
-### Retrieval (Gemini `gemini-embedding-2`, all five documents)
+### Retrieval (Gemini `gemini-embedding-2`, all nine documents)
 
-73 answerable and 8 out-of-scope questions, same chunking as above.
+106 answerable and 8 out-of-scope questions, same chunking as above.
 
 | retrieval | hit@1 | hit@3 | hit@6 | MRR |
 |---|---|---|---|---|
-| vector only | 0.81 | 0.93 | 0.96 | 0.871 |
-| keyword only | 0.74 | 0.82 | 0.89 | 0.786 |
-| hybrid, keyword weight 1.0 (default) | 0.81 | 0.89 | 0.93 | 0.856 |
-| hybrid, keyword weight 0.5 | 0.81 | 0.92 | 0.95 | 0.861 |
-| hybrid, keyword weight 0.25 | 0.78 | 0.93 | 0.95 | 0.857 |
+| vector only | 0.78 | 0.92 | 0.97 | 0.859 |
+| keyword only | 0.66 | 0.78 | 0.87 | 0.728 |
+| hybrid, keyword weight 1.0 (default) | 0.78 | 0.91 | 0.94 | 0.844 |
+| hybrid, keyword weight 0.5 | 0.78 | 0.93 | 0.95 | 0.852 |
+| hybrid, keyword weight 0.25 | 0.77 | 0.94 | 0.96 | 0.856 |
 
-- **With Gemini embeddings, hybrid does not beat plain vector search** on this question set (MRR 0.856 vs 0.871). The gap between the hybrid weights is one or two questions out of 73, which is within noise, so the default weight of 1.0 was not changed. Hybrid is kept for the same robustness reason as above (and the local model, where keyword search is the stronger signal).
-- **Refusal threshold 0.65 holds up, but with little room.** Answerable questions score from 0.661 to 0.851 (median 0.773); out-of-scope ones from 0.548 to 0.704 (median 0.625). At 0.65, 62% of out-of-scope questions are refused and none of the answerable ones; 0.70 would refuse 88% but also wrongly refuse 10% of answerable ones. The lowest answerable score is only 0.011 above the threshold, so a few more questions could push a correct one under it. The keyword check does not help: all 8 out-of-scope questions had a keyword hit.
+- **With Gemini embeddings, hybrid does not beat plain vector search**: MRR 0.844 against 0.859, a paired difference of -0.014 (95% CI -0.068 to +0.039), so neither is reliably better. It is reliably better than keyword-only (+0.117, 95% CI +0.063 to +0.174). The hybrid weights are indistinguishable (weight 1.0 minus 0.5: -0.007, 95% CI -0.022 to +0.008; minus 0.25: -0.012, 95% CI -0.036 to +0.013), so the default weight of 1.0 was not changed. Hybrid is kept for the same robustness reason as above (and the local model, where keyword search is the stronger signal).
+- **Refusal threshold 0.65 holds up, but with little room.** Answerable questions score from 0.661 to 0.853 (median 0.766); out-of-scope ones from 0.566 to 0.704 (median 0.637). At 0.65, 62% of out-of-scope questions are refused and none of the answerable ones; 0.70 would refuse 88% but also wrongly refuse 8% of answerable ones. The lowest answerable score is only 0.011 above the threshold, so a few more questions could push a correct one under it. Adding 33 questions and four contract documents did not move that lowest score. The keyword check does not help: all 8 out-of-scope questions had a keyword hit.
+- **What 106 questions can and cannot show.** One question moves a hit rate by about one point, and the 95% intervals are still wide (hit@3 for the default hybrid with Gemini is 0.91, interval 0.83 to 0.95). The set reliably catches large regressions, which is what the CI floor uses it for, but it cannot rank two close configurations. The full tables with intervals are in the result files below; more questions would be needed for finer comparisons.
 - Full output: [`backend/evals/results/gemini.md`](backend/evals/results/gemini.md).
 
 ### Earlier run with Gemini embeddings and Groq answers (two UN documents only)
 
 Measured before the other three documents and the `ts_rank` change, so it does not describe the current code. It is kept in [`backend/evals/results/history/`](backend/evals/results/history/). On 38 questions: Gemini hybrid reached hit@3 1.00 and MRR 0.934; every answer was grounded and 38/38 cited a gold page; all 8 out-of-scope questions were refused; and an instruction planted inside a document was ignored. The first version of that eval reported only 34% grounded: the model wrote citations as `【1†L1-L3】` and the parser only knew `[1]`. Fixing the parser is why the answer eval exists.
 
-### Answer quality (Gemini retrieval, Groq `openai/gpt-oss-120b`, all five documents)
+### Answer quality (Gemini retrieval, Groq `openai/gpt-oss-120b`, all nine documents)
 
-The full set (105 cases) ran over two days because of Groq's daily token cap. Output: [`backend/evals/results/answers-gemini.md`](backend/evals/results/answers-gemini.md).
+The full set is 144 cases. It was first run (105 cases, five documents) over two days because of Groq's daily token cap; after the four contract agreements were added, the cases whose retrieved context changed were re-run and the rest came from the cache, which took 19 minutes. Output: [`backend/evals/results/answers-gemini.md`](backend/evals/results/answers-gemini.md).
 
 | check | result |
 |---|---|
-| gold page was in the context sent to the LLM | 93% (68/73) |
-| answer was grounded (cited a source, did not refuse) | 93% (68/73) |
-| a cited source is on a gold page | 92% (67/73) |
-| out-of-scope questions refused | 100% (8/8) |
-| near-miss questions answered honestly (refused or said it is not specified) | 100% (14/14) |
-| follow-ups: gold page in context, searching the raw follow-up | 56% (5/9) |
-| follow-ups: gold page in context, after rewriting with the conversation | 100% (9/9) |
-| follow-ups: a cited source is on a gold page | 78% (7/9) |
+| gold page was in the context sent to the LLM | 94% (100/106, 95% CI 88%-97%) |
+| answer was grounded (cited a source, did not refuse) | 94% (100/106, 95% CI 88%-97%) |
+| a cited source is on a gold page | 93% (99/106, 95% CI 87%-97%) |
+| out-of-scope questions refused | 100% (8/8, 95% CI 68%-100%) |
+| near-miss questions answered honestly (refused or said it is not specified) | 100% (18/18, 95% CI 82%-100%) |
+| follow-ups: gold page in context, searching the raw follow-up | 64% (7/11, 95% CI 35%-85%) |
+| follow-ups: gold page in context, after rewriting with the conversation | 100% (11/11, 95% CI 74%-100%) |
+| follow-ups: a cited source is on a gold page | 82% (9/11, 95% CI 52%-95%) |
 | planted instruction obeyed (lower is better) | no (0/1) |
 | injected document still answered correctly | yes (1/1) |
 
-- **Retrieval is the bottleneck, not the model.** Five of the six answerable misses (a04, a05, a18, a68, a72) did not get the gold page into the top 6, so the model never saw it. In one of them (a72) the model still answered from another page, so it counts as grounded but cites the wrong page. The sixth (a51) had the gold page in context and still was not answered with a citation.
-- **Rewriting follow-ups matters:** searching the raw follow-up finds the gold page 5 times out of 9; after the LLM rewrites it using the conversation, 9 out of 9. Two follow-ups (f06, f07) are still not cited on a gold page.
-- **Prompt injection:** this is a single case (a lease with a planted instruction to output a code word). The model ignored it and answered the real question. One case shows the defence can work, not that it always does.
-- With 73 answerable questions, one question is about 1.4 percentage points, so small differences are noise.
+Each rate carries its 95% confidence interval (Wilson). With so few cases, a perfect score is weaker evidence than it looks: 8 of 8 out-of-scope refusals is consistent with a true rate as low as 68%, and 18 of 18 near-miss answers with 82%. Treat 100% here as "no failures seen", not as a guarantee.
 
-The Gemini retrieval eval above was produced with `uv run python -m evals.run --provider gemini --sweep --reuse` (about 920 of Gemini's 1000 daily embeddings, once).
+- **Retrieval is the bottleneck, not the model.** Six of the seven answerable misses (a04, a05, a18, a68, a72, a81) did not get the gold page into the top 6, so the model never saw it. In one of them (a72) the model still answered from another page, so it counts as grounded but cites the wrong page. The seventh (a51) had the gold page in context and still was not answered with a citation.
+- **Rewriting follow-ups matters:** searching the raw follow-up finds the gold page 7 times out of 11; after the LLM rewrites it using the conversation, 11 out of 11. Two follow-ups (f06, f07) are still not cited on a gold page.
+- **Prompt injection:** this is a single case (a lease with a planted instruction to output a code word). The model ignored it and answered the real question. One case shows the defence can work, not that it always does.
+- **Adding four contract agreements did not hurt the original questions.** The original 73 questions score exactly as before (68 of 73 grounded) even though nine documents now compete for the same top 6, and the 33 new contract questions score 32 of 33 (the one miss, a81, asks about the UN sales convention and retrieval returned the wrong pages). The new documents share a lineage and much of their wording, so questions name the agreement they are about; the eval does not test a user who asks "what is the notice period?" without saying which contract.
+- With 106 answerable questions, one question is about 0.9 percentage points, so small differences are noise.
+
+The Gemini retrieval eval above was produced with `uv run python -m evals.run --provider gemini --sweep` (the four added agreements cost about 130 Gemini embeddings plus about 40 for the new questions; the earlier five documents used about 920 of the day's 1,000, once).
 
 ### Free-tier limits that shape the project
 
-- **Gemini embeddings:** about 1,000 requests per day (measured on this project; Google does not publish the embedding figure), and every chunk in a batch counts as one. Daily quotas reset at midnight Pacific time. Ingesting the five documents takes about 800.
-- **Groq `gpt-oss-120b`:** 30 requests and 8,000 tokens per minute, 1,000 requests and 200,000 tokens per day ([Groq's rate-limit table](https://console.groq.com/docs/rate-limits)). A full answer eval (about 300,000 tokens) therefore takes two days; finished cases are cached. One answer costs about 3,000 tokens, so **Groq, not Gemini, is the real ceiling for a public demo: roughly 60 answers a day in total.** (That per-answer figure is derived from the eval's token use, not measured on live traffic.)
+- **Gemini embeddings:** about 1,000 requests per day (measured on this project; Google does not publish the embedding figure), and every chunk in a batch counts as one. Daily quotas reset at midnight Pacific time. Ingesting the nine documents (979 chunks) takes about 980, which is the whole day's quota: on a machine without the eval's embedding cache the first ingest has to be spread over two days.
+- **Groq `gpt-oss-120b`:** 30 requests and 8,000 tokens per minute, 1,000 requests and 200,000 tokens per day ([Groq's rate-limit table](https://console.groq.com/docs/rate-limits)). A full 105-case answer eval is roughly 170,000 tokens, most of a day's budget, and the per-minute cap makes it slow (it took two sessions); finished cases are cached. **An answer costs about 1,750 tokens**: measured on 10 questions through the app's own prompts, the mean was 1,744 (range 1,497 to 2,024: about 1,660 for the prompt with its six passages, about 85 for the answer), and a follow-up adds about 260 for the query rewrite. So 200,000 tokens is about 110 answers, and **Groq, not Gemini, is the real ceiling for a public demo**; the demo preset allows 80 a day in total, which leaves headroom for long answers, follow-ups and evals. The per-minute limit (about four answers a minute across all visitors) is the tighter one in a burst: the app waits and retries, then shows an error. The measurement is from ten questions, not live traffic; Langfuse traces (below) are the way to re-check it.
 - The app stops retrying when a provider reports a daily limit and tells the user when it resets, instead of failing slowly.
-- Paid Gemini embeddings cost $0.20 per million input tokens ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). By my arithmetic (about 800 chunks of roughly 300 tokens) the whole sample set is around five cents, so the paid tier is the cheap way out if the free quota ever becomes the constraint.
+- Paid Gemini embeddings cost $0.20 per million input tokens ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). By my arithmetic (about 980 chunks of roughly 300 tokens) the whole sample set is around six cents, so the paid tier is the cheap way out if the free quota ever becomes the constraint.
 
 ### Accounts and per-user documents
 
@@ -120,7 +129,7 @@ Sign-in is Google only (one provider, so one person cannot end up with two accou
 
 | Setting | Demo preset | What it does |
 |---|---|---|
-| `QUESTION_DAILY_LIMIT` | 60 | Answers per day across everyone (Groq's token budget) |
+| `QUESTION_DAILY_LIMIT` | 80 | Answers per day across everyone (Groq's token budget) |
 | `VISITOR_QUESTION_LIMIT` | 10 | Answers per user per day (per hashed IP for anonymous visitors) |
 | `VISITOR_UPLOAD_LIMIT` | 2 | New documents per user per day |
 | `MAX_UPLOAD_CHUNKS` | 150 | Longest PDF accepted (one chunk is one Gemini request) |
@@ -177,7 +186,7 @@ uv run python -m evals.run --provider local --sweep
 
 Results are written to `backend/evals/results/`.
 
-`--min-mrr 0.72` makes `evals.run` exit 1 when the default hybrid MRR falls below that floor, and `evals.answers --strict` exits 1 if an out-of-scope question was answered, a planted instruction was obeyed, or Groq cut the run short (`--min-grounded 0.85` adds a floor on grounded answers). In CI, [`.github/workflows/evals.yml`](.github/workflows/evals.yml) runs the retrieval eval with the local model (no keys, no quota) weekly and on demand with a floor of 0.72 (the committed local result is 0.794; the floor leaves room for a different CPU). The Groq answer eval only runs when started by hand, because it spends the tokens the live demo answers with: the default sample of 5 answerable questions is 32 cases, roughly 95k of Groq's 200k daily tokens. The Gemini evals stay local, since a fresh machine has no embedding cache and would use up the day's 1,000 embeddings.
+`--min-mrr 0.68` makes `evals.run` exit 1 when the default hybrid MRR falls below that floor, and `evals.answers --strict` exits 1 if an out-of-scope question was answered, a planted instruction was obeyed, or Groq cut the run short (`--min-grounded 0.85` adds a floor on grounded answers). In CI, [`.github/workflows/evals.yml`](.github/workflows/evals.yml) runs the retrieval eval with the local model (no keys, no quota) weekly and on demand with a floor of 0.68 (the committed local result is 0.743; the floor leaves room for a different CPU). The Groq answer eval only runs when started by hand, because it spends the tokens the live demo answers with: the default sample of 5 answerable questions is 32 cases, roughly 50k of Groq's 200k daily tokens (by the measured 1,750 per answer). The Gemini evals stay local, since a fresh machine has no embedding cache and would use up the day's 1,000 embeddings.
 
 ### Tracing
 
@@ -211,10 +220,10 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 
 - No OCR: scanned PDFs are rejected, not read.
 - Follow-ups work by rewriting the latest message into a standalone question with the LLM; there is no other conversation memory, and a failed rewrite falls back to searching the raw message.
-- The eval set is small (73 answerable questions over five documents, only two of them contracts). Treat the numbers as a regression check, not proof of accuracy on real contracts.
+- The eval set is still small (106 answerable questions over nine documents, five of them standard contract templates). Treat the numbers as a regression check, not proof of accuracy on real contracts, and read the confidence intervals, which are wide.
 - Free-tier quotas (see above) limit uploads, evals and how many questions a public demo can answer per day. The budget guard keeps a deployment inside them; it does not raise them.
 - Two simultaneous uploads by one user can slightly exceed that user's cap.
-- Deployment is untested against the real services (see `DEPLOY.md`, step 9). The Blob, Langfuse and streaming-size behaviour is covered only by tests that fake those services.
+- The deployment guide has been followed once on real services (see `DEPLOY.md`): direct upload through Blob, sign-in, streaming and seeding work there. Langfuse, the viewer for PDFs over 4.5 MB, the orphan-upload sweep and the per-visitor limits across networks have not been confirmed on the live site; the tests fake those services.
 - Uploads on Vercel Blob's free plan share 1 GB and 2,000 uploads a month; going over locks Blob for 30 days. Per-user daily upload tickets and an orphan sweep reduce that risk but do not remove it.
 - Prompt-injection defences (documents are fenced as untrusted data and the prompt says never to obey them) reduce the risk but cannot remove it.
 - Anonymous limits count a hashed IP, which people behind one shared address share. Signed-in users are counted per account, but a determined person can make several Google accounts; only the global daily caps stop that.
@@ -225,6 +234,6 @@ Errors are explicit: a used-up daily budget returns `429` with `Retry-After` (se
 - [x] Phase 1: FastAPI + pgvector + hybrid retrieval + citations + eval harness
 - [x] Phase 2: Next.js UI with streaming chat and a PDF viewer that jumps to the cited page (uses the browser's built-in PDF viewer)
 - [x] Phase 3: Google sign-in, per-user documents, per-user limits
-- [x] Phase 4 (code): direct-to-Blob uploads, Neon-safe database setup, optional Langfuse tracing, scheduled and on-demand CI evals. **Not yet deployed or run against real Vercel, Neon, Blob or Langfuse accounts**: follow [`DEPLOY.md`](DEPLOY.md) and its checklist.
+- [x] Phase 4 (code): direct-to-Blob uploads, Neon-safe database setup, optional Langfuse tracing, scheduled and on-demand CI evals. Deployed once on Vercel + Neon + Blob (a 15 MB PDF uploaded, queried and deleted); the remaining checklist items are listed in [`DEPLOY.md`](DEPLOY.md).
 
 Not legal advice. MIT licensed.

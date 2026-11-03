@@ -4,11 +4,11 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# From the eval sweeps in evals/results/. gemini: on the first two documents answerable
-# questions scored >= 0.661 and out-of-scope ones <= 0.641, so 0.65 sat in the gap. That is
-# PROVISIONAL until the five-document Gemini sweep is run: the local model's gap closed on that
-# larger corpus (answerable >= 0.557, out-of-scope up to 0.641). local (bge) stays at the
-# conservative 0.5 (no false refusals). hash is the test embedder and has no calibration.
+# From the nine-document eval sweeps in evals/results/. gemini: answerable questions scored
+# >= 0.661 and out-of-scope ones up to 0.704, so 0.65 sits just under every answerable score and
+# refuses 62% of out-of-scope questions (the rest are caught, if at all, by the model). local
+# (bge): answerable >= 0.557 and out-of-scope up to 0.648 overlap, so it stays at the conservative
+# 0.5 (no false refusals). hash is the test embedder and has no calibration.
 THRESHOLDS = {"gemini": 0.65, "local": 0.5, "hash": 0.5}
 
 # The demo-preset limits, in the order of their preset values in Settings._defaults.
@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     chunk_overlap_chars: int = 150
     retrieve_candidates: int = 30
     retrieve_top_k: int = 6
-    # Weight of the keyword ranking in RRF (vector = 1.0). With ts_rank, equal weights scored
-    # best on the 5-document local eval (MRR 0.794 vs 0.755 at 0.25). Re-check with Gemini.
+    # Weight of the keyword ranking in RRF (vector = 1.0). On the nine-document evals the weights
+    # are statistically indistinguishable (see evals/results/*.md), so the default was not tuned.
     keyword_weight: float = 1.0
     # Refuse when the best cosine similarity is below this. Similarity scales differ per
     # embedding model, so the default depends on the provider (see THRESHOLDS). Set
@@ -85,8 +85,10 @@ class Settings(BaseSettings):
     demo_mode: bool = False
     # Kill switch for uploads and deletes by signed-in users. Anonymous visitors never have them.
     uploads_enabled: bool = True
-    # Groq allows 200k tokens a day and an answer costs about 3k, so ~60 answers a day in all.
-    question_daily_limit: int | None = None  # demo preset: 60
+    # Groq allows 200k tokens a day. Measured on 10 questions with the app's own prompts: about 1.7k
+    # tokens per answer (range 1.5k-2.0k; a follow-up adds about 0.26k for the rewrite), so 200k is
+    # ~110 answers. 80 leaves a quarter of the budget for long answers, follow-ups and the evals.
+    question_daily_limit: int | None = None  # demo preset: 80
     visitor_question_limit: int | None = None  # demo preset: 10
     visitor_upload_limit: int | None = None  # demo preset: 2
     max_upload_chunks: int | None = None  # demo preset: 150 (one chunk = one Gemini request)
@@ -109,7 +111,7 @@ class Settings(BaseSettings):
         demo = self.demo_mode
         if self.embed_daily_limit is None and self.embedding_provider == "gemini":
             self.embed_daily_limit = 1000
-        for name, preset in zip(LIMITS, (60, 10, 2, 150), strict=True):
+        for name, preset in zip(LIMITS, (80, 10, 2, 150), strict=True):
             if getattr(self, name) is None and demo:
                 setattr(self, name, preset)
         for name in LIMITS + ("embed_daily_limit",):

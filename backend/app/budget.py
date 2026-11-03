@@ -20,7 +20,7 @@ _RESET = (
 )
 
 EMBEDDINGS = "embeddings"  # one per text sent to the embedding API
-QUESTIONS = "questions"  # one per answered question (each costs about 3k Groq tokens)
+QUESTIONS = "questions"  # one per question (an answer costs about 1.8k Groq tokens, measured)
 RETENTION_DAYS = 7
 
 

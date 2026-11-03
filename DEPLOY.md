@@ -13,7 +13,7 @@ This starts from nothing deployed. You will end up with:
 
 The browser talks to the web app for pages and sign-in, and **directly to the API** for data (with a 5-minute token the web app mints). That is why the two are separate projects on separate domains and the API needs CORS.
 
-> **Status of this guide.** The code paths (direct upload, registration, streaming, tracing, migrations) are covered by tests that fake Vercel Blob and Langfuse. Nothing here has been run against real Vercel, Neon, Blob or Langfuse accounts, because none existed when it was written. Step 9 is a checklist that proves each assumption on the real thing; do it before telling anyone about the site, and report what breaks.
+> **Status of this guide.** It has been followed on real Vercel, Neon, Blob and Google accounts. Confirmed working there: start-up and migrations on Neon, CORS, Google sign-in and token checks between the two projects, streamed answers, seeding, and uploading, asking about and deleting a 15 MB PDF through Blob. Not yet confirmed there: the 6 MB sample opening in the viewer, an unregistered upload being swept, the per-visitor limits across two networks, and Langfuse. Those are the unticked lines in step 9. The Troubleshooting section at the end lists the two mistakes that actually happened.
 
 ## 0. Before you start
 
@@ -41,10 +41,12 @@ Free-tier facts (as read from the providers' pages on 2026-10-29; they change, s
 ## 2. Neon database
 
 1. Create a project. Choose the region closest to where the API will run: Vercel Functions run in `iad1` (Washington, D.C.) by default, so pick **AWS US East (N. Virginia)**.
-2. In the dashboard open **Connect**. You need two connection strings for the same database:
+2. In the create dialog leave only **Postgres database** switched on (Object storage, Functions, AI gateway, Realtime and Better Auth are not used). When the project exists it shows an env snippet, and **Connect** shows it again. You need two connection strings for the same database:
    - the **pooled** one (the host contains `-pooler`) goes in `DATABASE_URL`: the app queries through it;
    - the **direct** one (no `-pooler`) goes in `DATABASE_URL_UNPOOLED`: migrations and seeding use it, because they take a Postgres advisory lock that a transaction-mode pooler cannot hold.
-3. Both should end in `?sslmode=require`.
+3. Both should end in `?sslmode=require`, possibly followed by `&channel_binding=require`; leave that as it is (if an error ever mentions channel binding, delete that part).
+4. **Neon names them the other way round.** In Neon's snippet `DATABASE_URL` is the *direct* string and `DATABASE_URL_POOLED` is the pooled one. Lexio wants the pooled string in `DATABASE_URL` and the direct one in `DATABASE_URL_UNPOOLED`. The direct host is the pooled host without `-pooler`.
+5. Keep both strings in a private note, not in the repo's `.env` (a Neon `DATABASE_URL` there would point your local evals, which drop and recreate a scratch database, at the cloud) and never in a chat or screenshot.
 
 The app already copes with Neon: connections are not prepared (`prepare_threshold=None`, needed behind the pooler), the pool holds no idle connections and checks one before use (Neon drops them when it scales to zero), and migrations run under an advisory lock so several cold instances cannot race. The first request after the database was idle waits for it to wake, usually a second or two.
 
@@ -60,7 +62,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
 
 ## 4. API project (Vercel project 2)
 
-1. **Add New → Project**, import the GitHub repo, name it `lexio-api`, and set **Root Directory** to `backend`. Vercel detects FastAPI from `pyproject.toml` (`[tool.vercel] entrypoint = "index:app"`), uses the Python version in `.python-version`, installs from `uv.lock`, and applies `vercel.json` (maximum duration 300 s). `.vercelignore` keeps tests and evals out of the bundle.
+1. **Add New → Project**, import the GitHub repo. Vercel notices both apps in the repo and offers to combine them (**Services**); do not, because the two apps would then share the `/api` path with Auth.js. Click **Import single project** next to **backend**, name it `lexio-api`, and check that **Root Directory** is `backend` and the preset is FastAPI. Vercel detects FastAPI from `pyproject.toml` (`[tool.vercel] entrypoint = "index:app"`), uses the Python version in `.python-version`, installs from `uv.lock`, and applies `vercel.json` (maximum duration 300 s). `.vercelignore` keeps tests and evals out of the bundle.
 2. Add these **Environment Variables** (Production):
 
    | Name | Value |
@@ -92,7 +94,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
 ## 6. Web project (Vercel project 1) and Blob
 
 1. **Add New → Project**, same repo, name `lexio-web`, **Root Directory** `frontend`. Framework: Next.js (automatic).
-2. **Storage → Create → Blob**, access **Private**, and connect it to `lexio-web` for Production (and Preview if you use previews). Vercel adds `BLOB_READ_WRITE_TOKEN` to the web project.
+2. **Storage → Create → Blob**, access **Private**, and connect it to `lexio-web` for Production (and Preview if you use previews). **Tick "Add a read-write token env var to this connection"**: it is off by default, and without it only `BLOB_STORE_ID` and `BLOB_WEBHOOK_PUBLIC_KEY` are created, so no upload token can be made.
 3. Add these environment variables to `lexio-web`:
 
    | Name | Value |
@@ -108,7 +110,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
 
 ## 7. Seed the sample documents
 
-The sample PDFs are loaded straight into Neon (they stay in Postgres, about 8 MB, and are streamed to the viewer). Run this once from `backend/` on your own machine, with the **direct** Neon string:
+The sample PDFs are loaded straight into Neon (they stay in Postgres, about 9 MB, and are streamed to the viewer). Run this once from `backend/` on your own machine, with the **direct** Neon string:
 
 ```powershell
 $env:DATABASE_URL = "<Neon direct string>"
@@ -118,7 +120,7 @@ $env:UV_PYTHON_PREFERENCE = "only-system"
 uv run python -m evals.seed
 ```
 
-It reads vectors from `backend/evals/.cache`, which exists on the machine that ran the Gemini eval and is not in git. **Without that cache it embeds about 800 chunks, most of a day's Gemini free quota.** It prints how many requests it sent. Re-running skips documents that are already present. Close the PowerShell window afterwards so the key and database string are not left in your environment.
+It reads vectors from `backend/evals/.cache`, which exists on the machine that ran the Gemini eval and is not in git. **Without that cache it embeds all 979 chunks, which is a whole day's Gemini free quota (and would also starve the live site's question embeddings), so do not run it that way.** It prints how many requests it sent. Re-running skips documents that are already present. Close the PowerShell window afterwards so the key and database string are not left in your environment.
 
 ## 8. Langfuse (optional)
 
@@ -129,7 +131,7 @@ Create a project in Langfuse, then add to the **API** project: `LANGFUSE_PUBLIC_
 Each line is an assumption the tests could not prove. Tick them off in order.
 
 - [ ] `https://lexio-api.vercel.app/api/health` returns `{"status":"ok"}`. Vercel → API project → **Logs**: no import errors (the `vercel-blob` SDK and the Python 3.14 runtime are the things most likely to complain).
-- [ ] Open the web app signed out: the five samples are listed.
+- [ ] Open the web app signed out: the nine samples are listed.
 - [ ] Open the **Buyer Guidance** sample (6 MB, over the 4.5 MB limit): the viewer shows it. This proves a streamed response is exempt from the limit, as Vercel's documentation says. If it fails with a 413, tell me; the fallback is signed Blob URLs.
 - [ ] Ask a question: text streams in token by token rather than arriving at the end.
 - [ ] Sign in with Google. Upload a PDF **larger than 4.5 MB**. It appears in your library and opens in the viewer. In Vercel → Storage → your Blob store you see one object under `u/…/`.
@@ -139,9 +141,16 @@ Each line is an assumption the tests could not prove. Tick them off in order.
 - [ ] If you set up Langfuse: the questions you asked appear as traces.
 - [ ] Try the same upload with the Wi-Fi turned off midway, then wait two hours and open the Blob store: the half-finished object is gone (the API sweeps unregistered uploads when an instance starts, so this needs some traffic).
 
+## Troubleshooting (things that actually happened)
+
+- **The page says "Can't reach the server".** The browser's call to the API was blocked. Almost always `CORS_ORIGINS` on `lexio-api` does not contain the web address exactly (no trailing slash, `https`, same spelling) or the API was not redeployed after changing it. Test: `curl -s -D - -o /dev/null -H "Origin: https://YOUR-WEB-DOMAIN" https://YOUR-API-DOMAIN/api/limits` must show an `Access-Control-Allow-Origin` line. If the web app was built with a wrong `NEXT_PUBLIC_API_URL`, fix it and redeploy the *web* project too (it is baked in at build time).
+- **"Your sign-in has expired or is invalid" after signing in.** The API rejected the web app's token: `API_TOKEN_SECRET` is not identical in both projects (secrets are write-only, so you cannot compare them). Generate one new value (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`), set it in both projects as a Secret for Production, redeploy both.
+- **Domains.** `<project-name>.vercel.app` is global; if it is taken Vercel appends a word (`lexio-api-five`). Use whatever Vercel shows. For a nicer address on the web app only, add one under Settings → Domains (for example `ask-lexio.vercel.app`) and then update the API's `CORS_ORIGINS` and the Google client's origin and redirect URI, and redeploy the API.
+- **`NEXT_PUBLIC_API_URL` is public.** Save it as type Config, not Secret. Everything else with a key or secret in its name should be Secret.
+
 ## Limits you should know about
 
-- **Groq is the ceiling**: about 60 answers a day across all visitors (`QUESTION_DAILY_LIMIT`). The CI answer eval and any local eval use the same Groq key and quota, so do not run them during demo hours.
+- **Groq is the ceiling**: 80 answers a day across all visitors (`QUESTION_DAILY_LIMIT`; an answer costs about 1.8k of Groq's 200k daily tokens, measured, so 200k is about 110). Groq also allows only 8,000 tokens a minute, about four answers a minute across everyone; a burst beyond that waits and retries, then shows an error. The CI answer eval and any local eval use the same Groq key and quota, so do not run them during demo hours.
 - **Orphaned uploads** (the browser uploaded, then the user closed the tab before registering) sit in Blob until the sweep removes them, up to a couple of hours later and only when an API instance starts. A flood of them is capped by the per-user ticket limit but not eliminated.
 - **A function is limited to 300 s.** Registering a very long PDF embeds every chunk inside one request; `MAX_UPLOAD_CHUNKS` (150 in demo mode) keeps that well inside the limit.
 - **Changing a secret**: a new `API_TOKEN_SECRET` must be set in both projects and both redeployed (until then every signed-in request gets a 401). A new `AUTH_SECRET` signs everyone out. A new `VISITOR_SALT` makes everyone a new visitor, which resets the anonymous counters.

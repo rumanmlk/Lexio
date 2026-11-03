@@ -127,20 +127,24 @@ async def storage_used(pool, user_id: str | None) -> tuple[int, int]:
     return row[0], row[1]
 
 
+def room_problem(s: Settings, count: int, size: int, nbytes: int) -> str | None:
+    """Why one more document of `nbytes` would break the user's storage caps, or None."""
+    if count >= s.user_max_documents:
+        return f"You can keep {s.user_max_documents} documents. Delete one to upload another."
+    if size + nbytes > s.user_max_mb * 1024 * 1024:
+        return f"Your documents would use more than {s.user_max_mb} MB. Delete one to make room."
+    return None
+
+
 async def require_room(pool, s: Settings, user_id: str, nbytes: int) -> None:
-    """403 when one more document of `nbytes` would break the user's storage caps."""
+    """403 when one more document of `nbytes` would break the user's storage caps. A first,
+    cheap check; the authoritative one runs again when the document is saved."""
     try:
         count, size = await storage_used(pool, user_id)
     except psycopg.Error as exc:
         raise HTTPException(503, "Database unavailable") from exc
-    if count >= s.user_max_documents:
-        raise HTTPException(
-            403, f"You can keep {s.user_max_documents} documents. Delete one to upload another."
-        )
-    if size + nbytes > s.user_max_mb * 1024 * 1024:
-        raise HTTPException(
-            403, f"Your documents would use more than {s.user_max_mb} MB. Delete one to make room."
-        )
+    if problem := room_problem(s, count, size, nbytes):
+        raise HTTPException(403, problem)
 
 
 async def require_visible(pool, owners: list[str], ids: set[UUID]) -> None:
@@ -285,6 +289,18 @@ async def ingest_upload(
                          "Today's document-processing budget is used up."),
         ])
 
+    async def recheck(conn) -> None:
+        """The caps again, inside the saving transaction (see ingest_pdf)."""
+        row = await (
+            await conn.execute(
+                "SELECT count(*), coalesce(sum(size_bytes), 0)::bigint FROM documents "
+                "WHERE owner_id = %s",
+                (who.user_id,),
+            )
+        ).fetchone()
+        if problem := room_problem(s, row[0], row[1], len(data)):
+            raise HTTPException(403, problem)
+
     try:
         result = await ingest.ingest_pdf(
             pool,
@@ -296,6 +312,7 @@ async def ingest_upload(
             chunk_chars=s.chunk_chars,
             overlap=s.chunk_overlap_chars,
             before_embed=reserve,
+            before_insert=recheck,
             blob_path=blob_path,
         )
     except ValueError as exc:
@@ -303,6 +320,12 @@ async def ingest_upload(
     except ProviderError as exc:
         await provider_failed(pool, s, receipt, exc)
         raise
+    except HTTPException:  # lost a race for the last free slot: the embeddings were really spent,
+        if receipt:  # but no upload happened, so the visitor keeps their daily upload
+            await budget.refund(pool, receipt.excluding(budget.EMBEDDINGS))
+        raise
+    if result.duplicate and receipt:  # an identical PDF finished saving first: nothing new stored
+        await budget.refund(pool, receipt.excluding(budget.EMBEDDINGS))
     return {
         "id": str(result.document_id),
         "filename": result.filename,
