@@ -140,7 +140,11 @@ def test_upload_dedupes_chat_cites_and_delete(client):
     sources = events[0][1]["sources"]
     assert sources and all(s["page"] >= 1 and s["document_id"] == doc_id for s in sources)
     assert "".join(d["text"] for n, d in events if n == "token").endswith("[1]")
-    assert events[-1][1] == {"grounded": True, "cited": [1], "refused": False}
+    done = events[-1][1]
+    assert {k: v for k, v in done.items() if k != "evidence"} == {
+        "grounded": True, "cited": [1], "refused": False,
+    }
+    assert isinstance(events[-1][1]["evidence"], dict)
 
     assert client.delete(f"/api/documents/{doc_id}").status_code == 204
     assert client.delete(f"/api/documents/{doc_id}").status_code == 404
@@ -196,7 +200,8 @@ def test_native_citation_format_is_normalized_in_the_stream(client, indexed, swa
     question = "Does everyone have the right to education?"
     events = parse_sse(client.post("/api/chat", json={"question": question}).text)
     assert "".join(d["text"] for n, d in events if n == "token") == "Everyone has the right.[1]"
-    assert events[-1] == ("done", {"grounded": True, "cited": [1], "refused": False})
+    name, done = events[-1]
+    assert name == "done" and done["grounded"] and done["cited"] == [1] and not done["refused"]
 
 
 def _blank_pdf(password: str | None = None) -> bytes:
@@ -476,11 +481,11 @@ def test_done_event_says_whether_the_model_refused_or_just_gave_no_citation(
     ask = {"question": "Does everyone have the right to education?"}
     swap_state("llm", Says(rag.REFUSAL))
     assert final(client.post("/api/chat", json=ask)) == (
-        "done", {"grounded": False, "cited": [], "refused": True}
+        "done", {"grounded": False, "cited": [], "refused": True, "evidence": {}}
     )
     swap_state("llm", Says("Probably, but I am not citing anything."))
     assert final(client.post("/api/chat", json=ask)) == (
-        "done", {"grounded": False, "cited": [], "refused": False}
+        "done", {"grounded": False, "cited": [], "refused": False, "evidence": {}}
     )
 
 

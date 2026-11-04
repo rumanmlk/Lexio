@@ -3,7 +3,7 @@
 This starts from nothing deployed. You will end up with:
 
 | Piece | Where | What it is |
-|---|---|---|
+| --- | --- | --- |
 | **Web** | Vercel project 1, root directory `frontend` | The Next.js app, Google sign-in, and the route that authorises PDF uploads |
 | **API** | Vercel project 2, root directory `backend` | The FastAPI app (a Python function) |
 | **Database** | Neon | Postgres with pgvector: chunks, vectors, counters, the sample PDFs |
@@ -66,7 +66,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
 2. Add these **Environment Variables** (Production):
 
    | Name | Value |
-   |---|---|
+   | --- | --- |
    | `DATABASE_URL` | Neon **pooled** string |
    | `DATABASE_URL_UNPOOLED` | Neon **direct** string |
    | `EMBEDDING_PROVIDER` | `gemini` |
@@ -98,7 +98,7 @@ Run it three times and keep them: `API_TOKEN_SECRET` (**the same value in both p
 3. Add these environment variables to `lexio-web`:
 
    | Name | Value |
-   |---|---|
+   | --- | --- |
    | `NEXT_PUBLIC_API_URL` | `https://lexio-api.vercel.app`. This is baked in at **build** time: change it and you must redeploy. |
    | `AUTH_SECRET` | from step 3 |
    | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | from step 5 |
@@ -132,7 +132,7 @@ Each line is an assumption the tests could not prove. Tick them off in order.
 
 - [ ] `https://lexio-api.vercel.app/api/health` returns `{"status":"ok"}`. Vercel → API project → **Logs**: no import errors (the `vercel-blob` SDK and the Python 3.14 runtime are the things most likely to complain).
 - [ ] Open the web app signed out: the nine samples are listed.
-- [ ] Open the **Buyer Guidance** sample (6 MB, over the 4.5 MB limit): the viewer shows it. This proves a streamed response is exempt from the limit, as Vercel's documentation says. If it fails with a 413, tell me; the fallback is signed Blob URLs.
+- [ ] Open the **Buyer Guidance** sample (6 MB, over the 4.5 MB limit): the viewer shows it. This proves a streamed response is exempt from the limit, as Vercel's documentation says. If it fails with a 413, the planned fallback is to serve the PDF through signed Blob URLs instead.
 - [ ] Ask a question: text streams in token by token rather than arriving at the end.
 - [ ] Sign in with Google. Upload a PDF **larger than 4.5 MB**. It appears in your library and opens in the viewer. In Vercel → Storage → your Blob store you see one object under `u/…/`.
 - [ ] Upload the same PDF again: "already in your library", and still one object in the store.

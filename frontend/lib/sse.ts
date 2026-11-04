@@ -3,7 +3,7 @@ import type { Source } from "./api.ts";
 export type ChatEvent =
   | { type: "sources"; sources: Source[]; query: string }
   | { type: "token"; text: string }
-  | { type: "done"; grounded: boolean; cited: number[]; refused: boolean }
+  | { type: "done"; grounded: boolean; cited: number[]; refused: boolean; evidence: Record<string, string> }
   | { type: "error"; message: string; quota: boolean };
 
 /** Turns one SSE block ("event: x\ndata: {...}") into a typed event, or null if unknown. */
@@ -36,6 +36,7 @@ export function parseBlock(block: string): ChatEvent | null {
         grounded: Boolean(body.grounded),
         cited: (body.cited as number[]) ?? [],
         refused: Boolean(body.refused),
+        evidence: (body.evidence as Record<string, string> | undefined) ?? {},
       };
     case "error":
       return { type: "error", message: String(body.message ?? "Something went wrong."), quota: Boolean(body.quota) };

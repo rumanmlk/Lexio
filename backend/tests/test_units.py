@@ -191,3 +191,25 @@ def test_settings_presets_for_the_free_tier():
     off = Settings(embedding_provider="hash", demo_mode=True, visitor_question_limit=0,
                    _env_file=None)
     assert off.visitor_question_limit is None and off.question_daily_limit == 80  # 0 = off
+
+
+def test_evidence_sentences_picks_the_closest_sentence_or_nothing():
+    from uuid import uuid4
+
+    from app.rag import evidence_sentences
+    from app.retrieval import Hit
+
+    content = (
+        "1. Introduction. This agreement allows each party to share information. "
+        "2. The Receiving Party may disclose Confidential Information to its employees, "
+        "agents, advisors and contractors having a reasonable need to know for the Purpose. "
+        "3. Either party may terminate on notice."
+    )
+    hit = Hit(chunk_id=1, document_id=uuid4(), filename="a.pdf", page=2, content=content, score=1.0)
+    answer = "Contractors with a reasonable need to know may receive it [1]. The sky is blue [1]."
+    ev = evidence_sentences(answer, [hit])
+    assert "reasonable need to know" in ev["1"] and "terminate" not in ev["1"]
+    # a claim sharing too little with the passage gets no sentence (the client shows the passage)
+    assert evidence_sentences("Payment is due in thirty days [1].", [hit]) == {}
+    # numbers that are not cited sources are ignored
+    assert evidence_sentences("Contractors need to know [3].", [hit]) == {}
