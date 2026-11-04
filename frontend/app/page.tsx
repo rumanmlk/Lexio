@@ -1,372 +1,151 @@
-"use client";
+import Link from "next/link";
+import { Icon } from "@/components/Icon";
+import { Logo } from "@/components/Logo";
+import { SignInButton } from "@/components/SignInButton";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { REPO_URL, SAMPLE_QUESTIONS } from "@/lib/samples";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ApiError,
-  deleteAccount,
-  deleteDocument,
-  formatWait,
-  getLimits,
-  listDocuments,
-  openChat,
-  uploadDocument,
-  type Doc,
-  type Limits,
-  type Source,
-  type Turn,
-} from "@/lib/api";
-import { signIn, signOut } from "next-auth/react";
-import { readEvents } from "@/lib/sse";
-import { Message, type ChatMessage } from "@/components/Message";
-import { PdfPane, type View } from "@/components/PdfPane";
+// From backend/evals/results/answers-gemini.md (Gemini embeddings, gpt-oss-120b, all nine documents).
+const EVIDENCE = [
+  { big: "94%", text: "of answers cite a source and stay grounded (100 of 106)" },
+  { big: "8 of 8", text: "out-of-scope questions refused instead of invented" },
+  { big: "18 of 18", text: "near-miss questions answered with “the document doesn't say”" },
+  { big: "106", text: "hand-checked questions across 9 public documents" },
+];
 
-// The server reads only the last 6 turns of history and rejects a request with more than 20.
-const HISTORY_TURNS = 6;
+const STEPS = [
+  { icon: "up", title: "Add documents", text: "Use the sample contracts or upload a PDF. Text is split by page, so a citation always means exactly one page." },
+  { icon: "search", title: "Ask in plain words", text: "Hybrid search finds the passages, and follow-up questions are rewritten using the conversation." },
+  { icon: "eye", title: "Check the source", text: "Hover a number to see the passage. Click it to open the page with the text highlighted." },
+] as const;
 
-const left = (c: { used: number; limit: number | null }) =>
-  c.limit === null ? Infinity : Math.max(c.limit - c.used, 0);
-
-export default function Home() {
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [limits, setLimits] = useState<Limits | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<View | null>(null);
-  const [banner, setBanner] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<{ message: string; quota: boolean } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const abort = useRef<AbortController | null>(null);
-  const nextId = useRef(1);
-  const bottom = useRef<HTMLDivElement>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const [d, l] = await Promise.all([listDocuments(), getLimits()]);
-      setDocs(d);
-      setLimits(l);
-      setBanner(null);
-    } catch (e) {
-      setBanner((e as Error).message);
-    }
-  }, []);
-
-  const refreshLimits = useCallback(() => getLimits().then(setLimits).catch(() => {}), []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    // A smooth scroll restarts on every token; only animate when nothing is streaming.
-    bottom.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth", block: "end" });
-  }, [messages, busy]);
-
-  const questionsLeft = limits ? Math.min(left(limits.questions), left(limits.site_questions)) : Infinity;
-  const outOfQuestions = questionsLeft === 0;
-  const noDocs = docs.length === 0;
-  const canAsk = !busy && !outOfQuestions && !noDocs && input.trim().length >= 2;
-
-  function toggleSelected(id: string, on?: boolean) {
-    setSelected((s) => {
-      const n = new Set(s);
-      if (on ?? !n.has(id)) n.add(id);
-      else n.delete(id);
-      return n;
-    });
-  }
-
-  function patch(id: number, fn: (m: ChatMessage) => ChatMessage) {
-    setMessages((all) => all.map((m) => (m.id === id ? fn(m) : m)));
-  }
-
-  async function ask(question: string) {
-    const history: Turn[] = messages
-      .filter((m) => !m.streaming && !m.error && m.text)
-      .slice(-HISTORY_TURNS)
-      .map((m) => ({ role: m.role, content: m.text.slice(0, 4000) }));
-    const userMsg: ChatMessage = blank(nextId.current++, "user", question);
-    const reply: ChatMessage = { ...blank(nextId.current++, "assistant", ""), streaming: true };
-    reply.question = question;
-    reply.scope = selected.size;
-    setMessages((all) => [...all, userMsg, reply]);
-    setInput("");
-    setSendError(null);
-    setBusy(true);
-    const controller = new AbortController();
-    abort.current = controller;
-    // A question that got no answer at all is taken back, so it can be sent again unchanged.
-    const giveBack = (error: { message: string; quota: boolean } | null) => {
-      setMessages((all) => all.filter((m) => m.id !== userMsg.id && m.id !== reply.id));
-      setInput((cur) => cur || question);
-      setSendError(error);
-    };
-    let streamed = false;
-    try {
-      const stream = await openChat(
-        { question, document_ids: selected.size ? [...selected] : null, history },
-        controller.signal,
-      );
-      for await (const ev of readEvents(stream)) {
-        if (ev.type === "sources") patch(reply.id, (m) => ({ ...m, sources: ev.sources, query: ev.query }));
-        else if (ev.type === "token") {
-          streamed = true;
-          patch(reply.id, (m) => ({ ...m, text: m.text + ev.text }));
-        } else if (ev.type === "done") patch(reply.id, (m) => ({ ...m, grounded: ev.grounded, refused: ev.refused }));
-        else if (ev.type === "error") {
-          const error = { message: ev.message, quota: ev.quota };
-          if (streamed) patch(reply.id, (m) => ({ ...m, error }));
-          else giveBack(error);
-        }
-      }
-    } catch (e) {
-      const aborted = (e as Error).name === "AbortError";
-      const error = aborted
-        ? null
-        : { message: (e as Error).message, quota: e instanceof ApiError && e.status === 429 };
-      if (streamed) {
-        if (error) patch(reply.id, (m) => ({ ...m, error }));
-      } else giveBack(error);
-    } finally {
-      patch(reply.id, (m) => ({ ...m, streaming: false }));
-      setBusy(false);
-      abort.current = null;
-      refreshLimits();
-    }
-  }
-
-  async function onUpload(file: File | undefined) {
-    if (!file) return;
-    setUploading(true);
-    setBanner(null);
-    try {
-      const r = await uploadDocument(file, limits);
-      await refresh();
-      if (r.sample) setBanner(`${r.filename} is one of the sample documents, so it is ready to use as it is.`);
-      else if (r.duplicate) setBanner(`${r.filename} is already in your library.`);
-    } catch (e) {
-      setBanner((e as Error).message);
-      refreshLimits();
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function onDelete(doc: Doc) {
-    if (!confirm(`Delete ${doc.filename}?`)) return;
-    try {
-      await deleteDocument(doc.id);
-      toggleSelected(doc.id, false);
-      setView((v) => (v?.documentId === doc.id ? null : v));
-      await refresh();
-    } catch (e) {
-      setBanner((e as Error).message);
-    }
-  }
-
-  async function onDeleteAccount() {
-    const mine = docs.filter((d) => !d.sample).length;
-    const what = `${mine} document${mine === 1 ? "" : "s"}`;
-    if (!confirm(`Delete your account data? This erases your ${what} and cannot be undone.`)) return;
-    try {
-      await deleteAccount();
-      await signOut({ redirect: false });
-      location.reload();
-    } catch (e) {
-      setBanner((e as Error).message);
-    }
-  }
-
-  const open = useCallback(
-    (s: Source) => setView({ documentId: s.document_id, filename: s.filename, page: s.page }),
-    [],
-  );
-
-  const uploadOff = !limits?.uploads_enabled;
-  const uploadsLeft = limits ? left(limits.uploads) : Infinity;
-
+export default function Landing() {
   return (
-    <main className={view ? "layout with-pdf" : "layout"}>
-      <nav className="side">
-        <h1>Lexio</h1>
-        <p className="tag">Ask legal PDFs, get answers with page citations.</p>
+    <>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <div className="page">
+        <header className="nav">
+          <Logo />
+          <nav className="nav-links" aria-label="Main">
+            <a className="opt" href="#how">
+              How it works
+            </a>
+            <a className="opt" href="#evidence">
+              Evidence
+            </a>
+            <a className="opt" href={REPO_URL}>
+              GitHub
+            </a>
+            <ThemeToggle />
+            <Link className="btn btn-secondary" href="/chat">
+              Open the app
+            </Link>
+          </nav>
+        </header>
 
-        <div className="account">
-          {limits && !limits.signed_in && (
-            <>
-              <button className="primary" onClick={() => signIn("google")}>
-                Sign in with Google
-              </button>
-              {process.env.NODE_ENV === "development" && (
-                <button className="link" onClick={() => signIn("dev", { redirect: false }).then(() => location.reload())}>
-                  dev login
-                </button>
-              )}
-              <p className="muted small">
-                Without an account you can ask questions about the sample documents. Sign in to upload your own PDFs;
-                only you can see them.
+        <main id="main">
+          <section className="hero" aria-labelledby="hero-title">
+            <div>
+              <p className="eyebrow">Document Q&amp;A for legal PDFs</p>
+              <h1 id="hero-title">Ask the contract. Get the page it came from.</h1>
+              <p className="lede">
+                Every answer links to the exact passage, highlighted on the page. If the documents don&apos;t say, Lexio tells you
+                instead of guessing.
               </p>
-            </>
-          )}
-          {limits?.signed_in && (
-            <p className="muted small">
-              Signed in.{" "}
-              <button className="link" onClick={() => signOut({ redirect: false }).then(() => location.reload())}>
-                sign out
-              </button>{" "}
-              <button className="link danger" onClick={onDeleteAccount}>
-                delete my data
-              </button>
-            </p>
-          )}
-        </div>
-
-        <h2>Documents</h2>
-        {noDocs && !banner && <p className="muted">No documents yet.</p>}
-        <ul className="docs">
-          {docs.map((d) => (
-            <li key={d.id}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={selected.has(d.id)}
-                  onChange={() => toggleSelected(d.id)}
-                />
-                <span className="name" title={d.filename}>
-                  {d.filename}
-                </span>
-                {d.sample && <span className="badge">sample</span>}
-              </label>
-              <span className="meta">{d.pages} pages</span>
-              <button className="link" onClick={() => setView({ documentId: d.id, filename: d.filename, page: 1 })}>
-                view
-              </button>
-              {limits?.uploads_enabled && !d.sample && (
-                <button className="link danger" onClick={() => onDelete(d)} aria-label={`Delete ${d.filename}`}>
-                  delete
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-        {docs.length > 1 && (
-          <p className="muted small">
-            {selected.size ? `Searching ${selected.size} selected.` : "Searching all documents."} Tick boxes to narrow it.
-          </p>
-        )}
-
-        <label className={`upload ${uploadOff || uploading || uploadsLeft === 0 ? "off" : ""}`}>
-          <input
-            type="file"
-            accept="application/pdf,.pdf"
-            disabled={uploadOff || uploading || uploadsLeft === 0}
-            onChange={(e) => {
-              onUpload(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          {uploading ? "Reading the PDF…" : "Upload a PDF"}
-        </label>
-        {limits && uploadOff && (
-          <p className="muted small">
-            {limits.signed_in ? "Uploads are turned off on this server." : "Sign in to upload your own PDFs."}
-          </p>
-        )}
-        {limits?.uploads_enabled && (
-          <p className="muted small">
-            PDF up to {limits.max_upload_mb} MB
-            {limits.max_upload_chunks ? `, about ${limits.max_upload_chunks} sections` : ""}.
-            {Number.isFinite(uploadsLeft) && ` ${uploadsLeft} upload${uploadsLeft === 1 ? "" : "s"} left today.`}
-            {` You are using ${limits.documents.used} of ${limits.documents.limit} documents and ${limits.storage_mb.used} of ${limits.storage_mb.limit} MB.`}
-          </p>
-        )}
-        {banner && (
-          <p className="notice bad" role="alert">
-            {banner}
-          </p>
-        )}
-      </nav>
-
-      <section className="chat">
-        <div className="thread">
-          {messages.length === 0 && (
-            <div className="empty">
-              <h2>Ask a question</h2>
-              <p>
-                Answers come only from your documents. Every claim links to the page it came from. If the answer isn't in
-                the documents, Lexio says so.
-              </p>
+              <div className="cta">
+                <Link className="btn btn-primary btn-lg" href="/chat">
+                  Try a sample contract <Icon name="arrow" />
+                </Link>
+                <SignInButton>Upload your own PDF</SignInButton>
+              </div>
+              <div className="try">
+                <p className="muted small">No sign-in needed for the samples. Or start with a question:</p>
+                <div className="row">
+                  {SAMPLE_QUESTIONS.slice(0, 3).map((q) => (
+                    <Link key={q} className="chip" href={`/chat?q=${encodeURIComponent(q)}`}>
+                      {q}
+                    </Link>
+                  ))}
+                </div>
+              </div>
             </div>
-          )}
-          {messages.map((m) => (
-            <Message key={m.id} message={m} onOpen={open} />
-          ))}
-          <div ref={bottom} />
-        </div>
 
-        <form
-          className="composer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canAsk) ask(input.trim());
-          }}
-        >
-          {outOfQuestions && limits && (
-            <p className="notice quota" role="status">
-              {left(limits.questions) === 0
-                ? "You've used all your questions for today."
-                : "The demo has answered all the questions the free tier allows today."}{" "}
-              Try again in about {formatWait(limits.resets_in_seconds)}.
-            </p>
-          )}
-          {sendError && (
-            <p className={`notice ${sendError.quota ? "quota" : "bad"}`} role="alert">
-              {sendError.message}
-            </p>
-          )}
-          <div className="row">
-            <textarea
-              value={input}
-              rows={2}
-              maxLength={2000}
-              placeholder={noDocs ? "Add a document to start" : "Ask about your documents…"}
-              disabled={outOfQuestions || noDocs}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setSendError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  if (canAsk) ask(input.trim());
-                }
-              }}
-            />
-            {busy ? (
-              <button type="button" onClick={() => abort.current?.abort()}>
-                Stop
-              </button>
-            ) : (
-              <button type="submit" disabled={!canAsk}>
-                Ask
-              </button>
-            )}
-          </div>
-          {Number.isFinite(questionsLeft) && !outOfQuestions && (
-            <p className="muted small">
-              {questionsLeft} question{questionsLeft === 1 ? "" : "s"} left today
-              {limits && left(limits.site_questions) < left(limits.questions) ? " (shared by all visitors)" : ""}.
-            </p>
-          )}
-        </form>
-      </section>
+            <figure className="demo" style={{ margin: 0 }} aria-label="Example answer">
+              <div className="demo-q">Can the other party share my confidential information with its contractors?</div>
+              <p className="demo-a">
+                Yes, with limits. They may share it with employees, agents, advisors and contractors who have a reasonable need to
+                know for the purpose<span className="cite on">1</span>. Those people must be bound by confidentiality duties no less
+                protective, and the receiving party stays responsible for their compliance<span className="cite on">1</span>.
+              </p>
+              <div className="source-card">
+                <header>
+                  <span className="mono">Mutual NDA · page 2</span>
+                  <span className="pill">
+                    <Icon name="shield" />
+                    Passage found
+                  </span>
+                </header>
+                <div className="paper">
+                  <p>
+                    …(b) not disclose Confidential Information to third parties without the Disclosing Party&apos;s prior written
+                    approval, except that the Receiving Party may disclose Confidential Information to{" "}
+                    <mark>its employees, agents, advisors, contractors and other representatives having a reasonable need to know</mark>{" "}
+                    for the Purpose, provided these representatives are bound by confidentiality obligations no less protective than
+                    the applicable terms in this MNDA…
+                  </p>
+                </div>
+              </div>
+              <figcaption className="demo-cap">Example on the sample Mutual NDA (Common Paper, CC BY 4.0).</figcaption>
+            </figure>
+          </section>
 
-      {view && <PdfPane view={view} onClose={() => setView(null)} />}
-    </main>
+          <section id="evidence" aria-labelledby="ev-title">
+            <h2 id="ev-title" className="sr-only">
+              Measured results
+            </h2>
+            <ul className="evidence">
+              {EVIDENCE.map((e) => (
+                <li key={e.big}>
+                  <b>{e.big}</b>
+                  <span>{e.text}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="evidence-note">
+              From the project&apos;s own answer evaluation, with confidence intervals and the method written up in the{" "}
+              <a href={`${REPO_URL}/blob/main/backend/evals/results/answers-gemini.md`}>repository</a>.
+            </p>
+          </section>
+
+          <section id="how" className="how" aria-labelledby="how-title">
+            <div>
+              <p className="eyebrow">How it works</p>
+              <h2 id="how-title">Verify in one click, not one hour.</h2>
+            </div>
+            <ol className="steps">
+              {STEPS.map((s) => (
+                <li key={s.title} className="step">
+                  <span className="ico">
+                    <Icon name={s.icon} />
+                  </span>
+                  <h3>{s.title}</h3>
+                  <p>{s.text}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </main>
+
+        <footer className="footer">
+          <span>Built with FastAPI, Postgres + pgvector and Next.js. Open source.</span>
+          <span>
+            Not legal advice. Sample documents are public; sources and licences are in the{" "}
+            <a href={`${REPO_URL}/blob/main/data/samples/NOTICE.md`}>notice</a>.
+          </span>
+        </footer>
+      </div>
+    </>
   );
-}
-
-function blank(id: number, role: ChatMessage["role"], text: string): ChatMessage {
-  return { id, role, text, sources: [], question: "", scope: 0, query: null, streaming: false, grounded: null, refused: null, error: null };
 }

@@ -184,6 +184,9 @@ export async function openChat(
   return res.body;
 }
 
+/** How many of a daily allowance remain; Infinity when there is no limit. */
+export const left = (c: Counter): number => (c.limit === null ? Infinity : Math.max(c.limit - c.used, 0));
+
 export function formatWait(seconds: number): string {
   const minutes = Math.ceil(seconds / 60);
   if (minutes < 60) return `${Math.max(minutes, 1)} min`;

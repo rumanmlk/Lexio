@@ -51,7 +51,7 @@ test("readEvents reassembles events split across chunks, including inside a mult
   });
   assert.deepEqual(await collect(enc), [
     { type: "token", text: "café" },
-    { type: "done", grounded: true, cited: [1], refused: false },
+    { type: "done", grounded: true, cited: [1], refused: false, evidence: {} },
   ]);
 });
 

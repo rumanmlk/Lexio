@@ -26,14 +26,11 @@ uploads/
 *.log
 .cache/
 
-# Editor, OS, and AI-tool files that are only for me
+# Editor, OS and local scratch files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-.claude/
-CLAUDE.md
-AGENTS.md
 scratch/
 notes/
 *.local.md

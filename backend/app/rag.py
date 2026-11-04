@@ -62,6 +62,55 @@ def cited_numbers(answer: str, n_sources: int) -> list[int]:
     return sorted(i for i in found if 1 <= i <= n_sources)
 
 
+_SENTENCE_END = re.compile(r"(?<=[.!?;])\s+(?=[A-Z0-9(“\"])")
+_WORD = re.compile(r"[a-z0-9]{3,}")
+_STOP = frozenset(
+    "the and for that this with from are was were has have had not but any all may shall will "
+    "must can its their they them which who whom than then there here such other into upon "
+    "also only under each per its been being would should could".split()
+)
+MIN_SHARED_WORDS = 3
+MIN_CLAIM_COVERAGE = 0.34
+
+
+def _content_words(s: str) -> set[str]:
+    return {w for w in _WORD.findall(s.lower()) if w not in _STOP}
+
+
+def evidence_sentences(answer: str, hits: list[Hit]) -> dict[str, str]:
+    """For each cited source, the sentence of that passage closest in wording to the answer
+    sentence(s) citing it. A sentence is returned only when it shares enough content words with
+    the claim to be a believable match; otherwise the source is left out and the client shows the
+    whole passage. This is a lexical match, not what the model actually read, so clients present it
+    as "closest sentence"."""
+    out: dict[str, str] = {}
+    claims: dict[int, list[set[str]]] = {}
+    for sent in _SENTENCE_END.split(" ".join(answer.split())):
+        words = _content_words(_CITE.sub(" ", sent))
+        if not words:
+            continue
+        for m in _CITE.finditer(sent):
+            for n in map(int, re.findall(r"\d+", m.group(1))):
+                if 1 <= n <= len(hits):
+                    claims.setdefault(n, []).append(words)
+    for n, claim_words in claims.items():
+        best, best_score = "", 0.0
+        for cand in _SENTENCE_END.split(" ".join(hits[n - 1].content.split())):
+            cand = cand.strip()
+            if not 20 <= len(cand) <= 700:
+                continue
+            have = _content_words(cand)
+            for claim in claim_words:
+                shared = len(have & claim)
+                score = shared / len(claim)
+                believable = shared >= MIN_SHARED_WORDS and score >= MIN_CLAIM_COVERAGE
+                if believable and score > best_score:
+                    best, best_score = cand, score
+        if best:
+            out[str(n)] = best
+    return out
+
+
 def should_refuse(r: Retrieval, min_similarity: float) -> bool:
     """Refuse when the best embedding match is weak.
 
@@ -192,4 +241,7 @@ async def answer_stream(
         return
     cited = cited_numbers(text, len(hits))
     refused = REFUSAL in text
-    yield sse("done", {"grounded": bool(cited) and not refused, "cited": cited, "refused": refused})
+    evidence = {} if refused else evidence_sentences(text, hits)
+    grounded = bool(cited) and not refused
+    done = {"grounded": grounded, "cited": cited, "refused": refused, "evidence": evidence}
+    yield sse("done", done)
