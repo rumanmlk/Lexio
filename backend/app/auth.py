@@ -37,7 +37,7 @@ class Identity:
 
 
 def _hash(s: Settings, value: str) -> str:
-    return hmac.new(s.visitor_salt.encode(), value.encode(), hashlib.sha256).hexdigest()[:16]
+    return hmac.new(s.salt.encode(), value.encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def verify_token(token: str, s: Settings) -> str:

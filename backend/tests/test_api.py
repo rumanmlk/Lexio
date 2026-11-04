@@ -1087,3 +1087,10 @@ def test_the_same_pdf_uploaded_twice_at_once_is_one_document_not_a_500(client, l
     assert first.json()["id"] == second.json()["id"]
     assert sorted([first.json()["duplicate"], second.json()["duplicate"]]) == [False, True]
     assert stored(client) == 1
+
+
+def test_oversize_upload_is_refused_with_413(client, limits):
+    limits(max_upload_mb=1)
+    big = b"%PDF-1.4\n" + b"0" * (1024 * 1024 + 10)
+    r = client.post("/api/documents", files={"file": ("big.pdf", big, "application/pdf")})
+    assert r.status_code == 413 and "1 MB" in r.json()["detail"]

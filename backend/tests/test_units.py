@@ -213,3 +213,11 @@ def test_evidence_sentences_picks_the_closest_sentence_or_nothing():
     assert evidence_sentences("Payment is due in thirty days [1].", [hit]) == {}
     # numbers that are not cited sources are ignored
     assert evidence_sentences("Contractors need to know [3].", [hit]) == {}
+
+
+def test_visitor_salt_is_never_a_public_default_when_a_secret_exists():
+    secret = "s" * 40
+    assert Settings(_env_file=None, api_token_secret=secret).salt != "lexio"
+    assert Settings(_env_file=None, api_token_secret=secret).salt != secret  # derived, not reused
+    assert Settings(_env_file=None, visitor_salt="mine", api_token_secret=secret).salt == "mine"
+    assert Settings(_env_file=None, api_token_secret="").salt == "lexio"  # local development only

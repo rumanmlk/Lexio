@@ -98,7 +98,18 @@ class Settings(BaseSettings):
     embed_query_reserve: int = 200
     # Behind a proxy that sets X-Forwarded-For itself (Vercel does), identify visitors by it.
     trust_forwarded_for: bool = False
-    visitor_salt: str = "lexio"  # visitors are stored as a salted hash of their IP, never the IP
+    # Visitors are stored as a salted hash of their IP, never the IP. Unset: a key derived from
+    # API_TOKEN_SECRET is used (a public default would let anyone with database access reverse the
+    # hashes), and only a deployment with neither falls back to a fixed local-dev value.
+    visitor_salt: str = ""
+
+    @property
+    def salt(self) -> str:
+        if self.visitor_salt:
+            return self.visitor_salt
+        if self.api_token_secret:
+            return "visitors:" + self.api_token_secret
+        return "lexio"
 
     @property
     def blob_enabled(self) -> bool:
