@@ -95,7 +95,7 @@ class Trace:
             if resp.status_code >= 300:  # 207 carries per-item errors in its body
                 log.warning("langfuse answered %s", resp.status_code)
             elif resp.status_code == 207 and (errors := resp.json().get("errors")):
-                log.warning("langfuse rejected %d event(s)", len(errors))
+                log.warning("langfuse rejected %d event(s): %s", len(errors), str(errors)[:600])
         except Exception:  # noqa: BLE001 - tracing must never break a chat
             log.warning("could not send trace to langfuse", exc_info=True)
 
