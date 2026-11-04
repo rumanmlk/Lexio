@@ -192,7 +192,8 @@ async def upload_document(request: Request, who: User, file: UploadFile):
     require_writable(s)
     if s.blob_enabled:  # a Vercel function would refuse most PDFs here anyway (4.5 MB limit)
         raise HTTPException(400, "Upload the PDF to storage, then POST /api/documents/register.")
-    data = await file.read()
+    # One byte past the cap is enough to refuse it; never hold a huge body in memory.
+    data = await file.read(s.max_upload_mb * 1024 * 1024 + 1)
     check_pdf(s, file.filename, data)
     return await ingest_upload(request, who, s, file.filename, data)
 
