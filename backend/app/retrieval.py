@@ -88,7 +88,12 @@ async def retrieve(
     candidates: int = 30,
     top_k: int = 6,
     keyword_weight: float = 1.0,
+    expansion: str = "",
 ) -> Retrieval:
+    """`expansion` (keyword mode) is extra text, such as a short passage the LLM wrote as the answer
+    might read, searched as a second keyword ranking and fused with the question's own: it finds
+    passages worded differently from the question without drowning the question's own words (which
+    appending it to the question does; see evals/expansion.py)."""
     params = {"owners": owners, "docs": document_ids, "n": candidates}
 
     async def vector() -> list[tuple[int, float]]:
@@ -97,22 +102,27 @@ async def retrieve(
             cur = await conn.execute(_VECTOR_SQL, {**params, "vec": vec})
             return await cur.fetchall()
 
-    async def keyword() -> list[tuple[int, float]]:
-        q = or_query(query)
+    async def keyword(text: str = query) -> list[tuple[int, float]]:
+        q = or_query(text)
         if not q:
             return []
         async with pool.connection() as conn:
             cur = await conn.execute(_KEYWORD_SQL, {**params, "q": q})
             return await cur.fetchall()
 
-    vec_rows, kw_rows = await asyncio.gather(
+    vec_rows, kw_rows, extra_rows = await asyncio.gather(
         vector() if mode in ("hybrid", "vector") else _empty(),
         keyword() if mode in ("hybrid", "keyword") else _empty(),
+        keyword(expansion) if expansion and mode == "keyword" else _empty(),
     )
     sims = {cid: sim for cid, sim in vec_rows}
     kw_ids = [cid for cid, _ in kw_rows]
 
-    fused = rrf([[cid for cid, _ in vec_rows], kw_ids], weights=[1.0, keyword_weight])
+    rankings, weights = [[cid for cid, _ in vec_rows], kw_ids], [1.0, keyword_weight]
+    if extra_rows:
+        rankings.append([cid for cid, _ in extra_rows])
+        weights.append(1.0)
+    fused = rrf(rankings, weights=weights)
     ranked = sorted(fused, key=fused.__getitem__, reverse=True)[:top_k]
     if not ranked:
         return Retrieval([], 0.0, False)

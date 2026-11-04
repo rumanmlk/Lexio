@@ -160,6 +160,21 @@ mark.hl { background: var(--mark); color: #1b1d20; padding: 0 2px; border-radius
 .footer { border-top: 1px solid var(--line); padding-block: 28px 40px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; color: var(--muted); font-size: 0.88rem; }
 .footer a { color: inherit; }
 
+.legal { max-width: 72ch; padding-block: 48px 72px; line-height: 1.65; }
+.legal h1 { font-family: var(--display); font-weight: 500; letter-spacing: -0.02em; font-size: clamp(2rem, 4vw, 2.8rem); line-height: 1.1; margin: 12px 0 8px; }
+.legal h2 { font-family: var(--display); font-weight: 500; font-size: 1.5rem; margin: 40px 0 8px; scroll-margin-top: 16px; }
+.legal h3 { font-size: 1.02rem; margin: 24px 0 4px; }
+.legal ul { padding-left: 1.25rem; }
+.legal li { margin-block: 6px; }
+.legal a { color: var(--accent); text-underline-offset: 3px; }
+.legal code { font-family: var(--mono); font-size: 0.88em; }
+.legal .callout { margin: 24px 0; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--surface-2); }
+.legal .table-wrap { overflow-x: auto; margin: 12px 0; }
+.legal table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.legal th, .legal td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.legal thead th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.legal tbody th { font-weight: 600; }
+
 /* ---- Workspace shell ---- */
 .app { display: grid; grid-template-columns: 276px minmax(0, 1fr); height: 100dvh; overflow: hidden; }
 .app[data-evidence="open"] { grid-template-columns: 276px minmax(0, 1fr) minmax(380px, 520px); }

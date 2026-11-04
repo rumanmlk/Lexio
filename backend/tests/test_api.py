@@ -159,6 +159,67 @@ def test_chat_refuses_when_nothing_indexed(client):
     assert "can't find" in events[1][1]["text"]
 
 
+def test_blocked_regions_can_chat_without_any_gemini_call(client, indexed, swap_state):
+    from app.embeddings import sample_queries
+
+    class NoProvider:  # any call that would reach Gemini fails the test
+        async def embed_query(self, text):
+            raise AssertionError("a blocked visitor's text must never be embedded by a provider")
+
+        embed_documents = embed_query
+
+    swap_state("embedder", NoProvider())
+    swap_state("llm", FakeLLM())
+    blocked = {"x-vercel-ip-country": "DE"}
+
+    # free text is searched by keyword and answered with sources
+    r = client.post("/api/chat", json={"question": "right to education"}, headers=blocked)
+    events = parse_sse(r.text)
+    assert r.status_code == 200
+    assert events[0][1]["sources"], "keyword search should find the education article"
+    assert events[-1][0] == "done" and events[-1][1]["grounded"]
+
+    # a question sharing no words with the document is rescued by the LLM-written passage...
+    r = client.post("/api/chat", json={"question": "zzzqqq xxyyzz"}, headers=blocked)
+    assert parse_sse(r.text)[0][1]["sources"]
+
+    # ...and when that finds nothing either, the answer is a refusal, not an error
+    class Unrelated(FakeLLM):
+        async def complete(self, system, user):
+            return "qqqq wwww"
+
+    swap_state("llm", Unrelated())
+    r = client.post("/api/chat", json={"question": "zzzqqq xxyyzz"}, headers=blocked)
+    assert parse_sse(r.text)[-1][1]["refused"] is True
+    swap_state("llm", FakeLLM())
+
+    # a follow-up works too (the rewrite uses the LLM, not Gemini)
+    history = [{"role": "user", "content": "right to education"},
+               {"role": "assistant", "content": "Everyone has it. [1]"}]
+    follow = {"question": "and who pays for it?", "history": history}
+    assert client.post("/api/chat", json=follow, headers=blocked).status_code == 200
+
+    # a suggested sample question uses its stored vector (hybrid search) and works as well
+    sample = next(iter(sample_queries()))
+    assert client.post("/api/chat", json={"question": sample}, headers=blocked).status_code == 200
+
+
+def test_upload_routes_refuse_blocked_regions_and_allow_others(client):
+    blocked = {"x-vercel-ip-country": "DE"}
+    files = {"file": ("a.pdf", b"%PDF-1.4", "application/pdf")}
+    who = {**blocked, **bearer()}
+    assert client.post("/api/documents", files=files, headers=who).status_code == 451
+    body = {"pathname": "u/a.pdf", "filename": "a.pdf"}
+    assert client.post("/api/documents/register", json=body, headers=who).status_code == 451
+    # reading is not blocked, and the limits tell the UI up front
+    assert client.get("/api/documents", headers=blocked).status_code == 200
+    lim = client.get("/api/limits", headers=who).json()
+    assert lim["region_blocked"] is True and lim["uploads_enabled"] is False
+    assert client.get("/api/limits", headers=bearer()).json()["region_blocked"] is False
+    us = {"x-vercel-ip-country": "US"}
+    assert client.post("/api/chat", json={"question": "Anything?"}, headers=us).status_code == 200
+
+
 def test_chat_validates_input(client):
     assert client.post("/api/chat", json={"question": ""}).status_code == 422
 

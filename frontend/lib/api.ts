@@ -29,6 +29,8 @@ export type Limits = {
   documents: Counter;
   storage_mb: Counter;
   uploads_enabled: boolean;
+  /** In this visitor's region uploads are refused and questions use keyword search only. */
+  region_blocked: boolean;
   max_upload_mb: number;
   max_upload_chunks: number | null;
   /** The server keeps PDFs in object storage: upload there first, then register (see below). */

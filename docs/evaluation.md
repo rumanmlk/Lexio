@@ -52,6 +52,34 @@ hit@k = the right page is among the top k results.
 - **What 106 questions can and cannot show.** One question moves a hit rate by about one point, and the 95% intervals are still wide (hit@3 for the default hybrid with Gemini is 0.91, interval 0.83 to 0.95). The set reliably catches large regressions, which is what the CI floor uses it for, but it cannot rank two close configurations. The full tables with intervals are in the result files below; more questions would be needed for finer comparisons.
 - Full output: [`backend/evals/results/gemini.md`](../backend/evals/results/gemini.md).
 
+## Search without Gemini (visitors where Google's free tier is not allowed)
+
+Google's Gemini terms allow only the paid service for users in the EEA, Switzerland and the UK, so for visitors detected there the app never calls Gemini: it searches by keyword and asks Groq for the answer. Measured with `uv run python -m evals.expansion` (the same 106 questions and nine documents; Groq's completions are cached).
+
+| keyword search | hit@1 | hit@3 | hit@6 | MRR |
+| --- | --- | --- | --- | --- |
+| question only | 0.66 | 0.78 | 0.87 | 0.728 |
+| question + LLM terms, one query | 0.43 | 0.69 | 0.84 | 0.578 |
+| question + LLM-written passage, one query | 0.51 | 0.72 | 0.82 | 0.623 |
+| two rankings fused: question, LLM-written passage (used) | 0.62 | 0.87 | 0.95 | 0.749 |
+| two rankings fused: question, LLM terms | 0.55 | 0.84 | 0.94 | 0.692 |
+
+- **Appending the LLM's text to the question made search worse** (MRR -0.105 to -0.150, intervals excluding 0): the extra OR-ed words drown the question's own.
+- **Ranking the question and the LLM-written passage separately, then fusing the rankings, raised hit@6 from 0.87 to 0.95 and hit@3 from 0.78 to 0.87**, against Gemini hybrid's 0.94 and 0.91. hit@6 is what the answer model sees (it reads the top six passages). The MRR difference (+0.021, 95% CI -0.044 to +0.088) is not reliable, and hit@1 is not better, so this recovers recall, not necessarily the very top rank. The passage variant was picked after comparing five variants on this same set, so treat the gain as indicative.
+- **Refusing out-of-scope questions without the similarity gate** (there is no similarity without a vector): 6 of the 7 out-of-scope questions that ran were refused by the model. The seventh ("penalties for breaching a non-disclosure agreement") was answered with a hedge that the documents set no fixed penalty. The eighth was not run because Groq's daily quota ran out (`uv run python -m evals.blocked_refusal`). For comparison, the normal pipeline refuses 8 of 8. The near-miss and answerable questions were not re-run in this mode.
+
+### Would another embedding model help there?
+
+Tested offline with the local `bge-base` vectors on top of the fused keyword rankings (`uv run python -m evals.local_fusion`, cached, no cost):
+
+| search | hit@1 | hit@3 | hit@6 | MRR |
+| --- | --- | --- | --- | --- |
+| keyword(question) + keyword(passage), the deployed one | 0.62 | 0.87 | 0.95 | 0.749 |
+| + bge vectors of the question | 0.68 | 0.91 | 0.93 | 0.788 |
+| + bge vectors of the question and the passage | 0.66 | 0.91 | 0.96 | 0.782 |
+
+Adding a local embedding model lifts hit@3 by about 4 points but not hit@6, and the MRR gain (+0.033 to +0.039, 95% CIs from -0.014 to +0.088) is not reliable. Serving a model, or a second embedding API, and keeping a second vector index just for these visitors was not worth that, so the deployed search stays as it is. A stronger hosted embedding model (for example Voyage's legal model or Jina v3) was not measured: it needs an account and key, and its quality here is unknown.
+
 ## Earlier run with Gemini embeddings and Groq answers (two UN documents only)
 
 Measured before the other three documents and the `ts_rank` change, so it does not describe the current code. It is kept in [`backend/evals/results/history/`](../backend/evals/results/history/). On 38 questions: Gemini hybrid reached hit@3 1.00 and MRR 0.934; every answer was grounded and 38/38 cited a gold page; all 8 out-of-scope questions were refused; and an instruction planted inside a document was ignored. The first version of that eval reported only 34% grounded: the model wrote citations as `【1†L1-L3】` and the parser only knew `[1]`. Fixing the parser is why the answer eval exists.
