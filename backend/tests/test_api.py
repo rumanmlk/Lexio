@@ -1022,7 +1022,7 @@ def test_upload_ticket_refuses_a_full_account_and_a_server_without_blob(client, 
 # ---- Langfuse tracing (app/tracing.py) ----------------------------------------------------
 
 
-INGEST = "https://langfuse.test/api/public/ingestion"
+INGEST = "https://langfuse.test/api/public/otel/v1/traces"
 
 
 @pytest.fixture
@@ -1034,38 +1034,69 @@ def langfuse(limits, indexed):
     limits(langfuse_public_key="pk-test", langfuse_secret_key="sk-test",
            langfuse_host="https://langfuse.test")
     with respx.mock(assert_all_called=False) as mock:
-        mock.post(INGEST).respond(207, json={"successes": [], "errors": []})
+        mock.post(INGEST).respond(200, json={})
         yield mock
 
 
-def sent_batch(mock):
+def sent_spans(mock):
+    """The spans of the one OTLP request, each as {"name", "kind", "attrs": {key: plain value}}."""
     assert mock.calls.call_count == 1
     call = mock.calls.last
-    return json.loads(call.request.content)["batch"], call.request
+    raw = json.loads(call.request.content)["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    spans = []
+    for sp in raw:
+        attrs = {a["key"]: next(iter(a["value"].values())) for a in sp["attributes"]}
+        spans.append({"name": sp["name"], "parent": sp.get("parentSpanId"), "id": sp["spanId"],
+                      "attrs": attrs})
+    return spans, call.request
 
 
 def test_a_chat_is_traced_with_numbers_and_flags_but_no_content_by_default(client, langfuse):
     r = ask(client)
     assert r.status_code == 200
-    batch, request = sent_batch(langfuse)
+    spans, request = sent_spans(langfuse)
     assert request.headers["authorization"].startswith("Basic ")
-    kinds = [e["type"] for e in batch]
-    assert kinds[0] == "trace-create" and "span-create" in kinds and "generation-create" in kinds
-    trace = batch[0]["body"]
-    assert trace["name"] == "chat" and "input" not in trace and "output" not in trace
-    meta = trace["metadata"]
-    assert meta["outcome"] in ("answered", "refused") and meta["total_ms"] >= 0
-    assert "userId" in trace and "alice" not in json.dumps(batch)  # a salted hash, not the id
-    everything = json.dumps(batch)
+    assert request.headers["x-langfuse-ingestion-version"] == "4"
+    root = spans[0]
+    assert root["name"] == "chat" and root["parent"] is None
+    types = {s["name"]: s["attrs"]["langfuse.observation.type"] for s in spans}
+    assert types["retrieval"] == "span" and types["answer"] == "generation"
+    assert all(s["parent"] == root["id"] for s in spans[1:])
+    assert "langfuse.observation.input" not in root["attrs"]
+    assert "langfuse.observation.output" not in root["attrs"]
+    attrs = root["attrs"]
+    assert attrs["langfuse.trace.metadata.outcome"] in ("answered", "refused")
+    assert int(attrs["langfuse.trace.metadata.total_ms"]) >= 0
+    assert "langfuse.user.id" in attrs and "alice" not in json.dumps(spans)  # a salted hash
+    everything = json.dumps(spans)
     assert "notice period" not in everything and "find this" not in everything  # no content
 
 
 def test_content_is_included_only_when_asked_for(client, langfuse, limits):
     limits(langfuse_capture_content=True)
     ask(client)
-    batch, _ = sent_batch(langfuse)
-    trace = batch[0]["body"]
-    assert trace["input"] == "What is the notice period?" and trace["output"]
+    spans, _ = sent_spans(langfuse)
+    root = spans[0]["attrs"]
+    assert json.loads(root["langfuse.observation.input"]) == "What is the notice period?"
+    assert json.loads(root["langfuse.observation.output"])
+
+
+def test_a_follow_up_adds_a_rewrite_generation_to_the_trace(client, langfuse, limits):
+    history = [{"role": "user", "content": "Does everyone have the right to education?"},
+               {"role": "assistant", "content": "Yes. [1]"}]
+    follow = {"question": "And is it free?", "history": history}
+    assert client.post("/api/chat", json=follow).status_code == 200
+    spans, _ = sent_spans(langfuse)
+    rewrite = next(s for s in spans if s["name"] == "rewrite")
+    assert rewrite["attrs"]["langfuse.observation.type"] == "generation"
+    assert "langfuse.observation.input" not in rewrite["attrs"]  # no content by default
+    assert "free" not in json.dumps(spans)
+    langfuse.calls.clear()
+    limits(langfuse_capture_content=True)
+    assert client.post("/api/chat", json=follow).status_code == 200
+    spans, _ = sent_spans(langfuse)
+    rewrite = next(s for s in spans if s["name"] == "rewrite")
+    assert json.loads(rewrite["attrs"]["langfuse.observation.input"]) == "And is it free?"
 
 
 def test_tracing_is_off_without_keys_and_a_broken_langfuse_never_breaks_a_chat(

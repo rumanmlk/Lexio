@@ -13,7 +13,7 @@ This starts from nothing deployed. You will end up with:
 
 The browser talks to the web app for pages and sign-in, and **directly to the API** for data (with a 5-minute token the web app mints). That is why the two are separate projects on separate domains and the API needs CORS.
 
-> **Status of this guide.** It has been followed on real Vercel, Neon, Blob and Google accounts. Confirmed working there: start-up and migrations on Neon, CORS, Google sign-in and token checks between the two projects, streamed answers, seeding, and uploading, asking about and deleting a 15 MB PDF through Blob. Not yet confirmed there: the 6 MB sample opening in the viewer, an unregistered upload being swept, the per-visitor limits across two networks, and Langfuse. Those are the unticked lines in step 9. The Troubleshooting section at the end lists the two mistakes that actually happened.
+> **Status of this guide.** It has been followed on real Vercel, Neon, Blob and Google accounts. Confirmed working there: start-up and migrations on Neon, CORS, Google sign-in and token checks between the two projects, streamed answers, seeding, and uploading, asking about and deleting a 15 MB PDF through Blob. Not yet confirmed there: the 6 MB sample opening in the viewer, an unregistered upload being swept, the per-visitor limits across two networks, and Langfuse traces from the deployed API (the trace format itself was checked against Langfuse from a local run). Those are the unticked lines in step 9. The Troubleshooting section at the end lists the two mistakes that actually happened.
 
 ## 0. Before you start
 
@@ -124,7 +124,7 @@ It reads vectors from `backend/evals/.cache`, which exists on the machine that r
 
 ## 8. Langfuse (optional)
 
-Create a project in Langfuse, then add to the **API** project: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_HOST` (`https://cloud.langfuse.com` for the EU region, `https://us.cloud.langfuse.com` for the US one). Each chat then produces one trace with a retrieval span and rewrite and answer generations. By default traces hold timings, counts and flags and a salted visitor hash. They do **not** hold the question, the passages or the answer, because those come from users' private documents. `LANGFUSE_CAPTURE_CONTENT=true` adds them; only turn it on for a deployment with no private uploads, or if you accept Langfuse holding that text.
+Create a project in Langfuse, then add to the **API** project: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_HOST` (`https://cloud.langfuse.com` for the EU region, `https://us.cloud.langfuse.com` for the US one). Each chat then produces one trace with a retrieval span and rewrite and answer generations. Traces are sent as OpenTelemetry spans to `/api/public/otel/v1/traces`, because Langfuse's older ingestion endpoint no longer accepts traces for newer organizations. If none appear, search the API project's **Logs** for `langfuse`: `answered 401` means wrong keys or region, and `rejected` lists the reason. By default traces hold timings, counts and flags and a salted visitor hash. They do **not** hold the question, the passages or the answer, because those come from users' private documents. `LANGFUSE_CAPTURE_CONTENT=true` adds them; only turn it on for a deployment with no private uploads, or if you accept Langfuse holding that text.
 
 ## 9. Check it on the real thing
 

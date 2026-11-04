@@ -546,7 +546,7 @@ async def chat(body: ChatRequest, request: Request, who: Who):
         if trace and body.history:
             trace.timed("generation", "rewrite", time.monotonic() - t0, model=s.groq_model,
                         metadata={"rewritten": query != body.question},
-                        **({"input": body.question, "output": query} if trace.content else {}))
+                        input=body.question, output=query)
         expansion = ""
         if expand_search:
             expansion = await rag.hypothetical_passage(request.app.state.llm, query)
@@ -576,8 +576,7 @@ async def chat(body: ChatRequest, request: Request, who: Who):
             "keyword_match": result.has_keyword_match,
             "refused_for_low_similarity": rag.should_refuse(result, min_similarity),
             "search_mode": mode,
-        }, **({"input": query, "output": [f"{h.filename} p.{h.page}" for h in result.hits]}
-              if trace.content else {}))
+        }, input=query, output=[f"{h.filename} p.{h.page}" for h in result.hits])
     stream = rag.answer_stream(
         request.app.state.llm, query, result, min_similarity=min_similarity
     )

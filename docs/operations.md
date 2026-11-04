@@ -45,4 +45,4 @@ What this does not cover: the counters see only traffic through this API (runnin
 
 ## Tracing
 
-Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and every chat sends one trace to Langfuse (retrieval span, query-rewrite and answer generations, outcome). By default it holds timings, counts, similarity and flags and a salted visitor hash, never the question, the passages or the answer; `LANGFUSE_CAPTURE_CONTENT=true` adds them. The trace is sent inside the request, with a 3-second timeout, because a serverless instance can be frozen before a background flush; a slow or failing Langfuse never affects an answer.
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and every chat sends one trace to Langfuse as OpenTelemetry spans (retrieval span, query-rewrite and answer generations, outcome). By default it holds timings, counts, similarity and flags and a salted visitor hash, never the question, the passages or the answer; `LANGFUSE_CAPTURE_CONTENT=true` adds them. The trace is sent inside the request, with a 3-second timeout, because a serverless instance can be frozen before a background flush; a slow or failing Langfuse never affects an answer.
