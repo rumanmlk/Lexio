@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { signIn, signOut } from "next-auth/react";
 import { left, type Doc, type Limits } from "@/lib/api";
@@ -126,14 +127,20 @@ export function Library(p: Props) {
           <Icon name="up" />
           {p.uploading ? "Reading the PDF…" : "Add a PDF"}
         </label>
-        {limits && !limits.uploads_enabled ? (
+        {limits?.region_blocked ? (
+          <span className="muted small">
+            Uploads are not available in your region. <Link href="/privacy">Why?</Link>
+          </span>
+        ) : limits && !limits.uploads_enabled ? (
           <span className="muted small">{limits.signed_in ? "Uploads are turned off on this server." : "Sign in to upload your own PDFs."}</span>
         ) : limits ? (
           <>
             <span className="muted small">
               Drop a file here or browse. Up to {limits.max_upload_mb} MB
               {limits.max_upload_chunks ? `, about ${limits.max_upload_chunks} sections` : ""}.
-              {Number.isFinite(uploadsLeft) && ` ${uploadsLeft} upload${uploadsLeft === 1 ? "" : "s"} left today.`}
+              {Number.isFinite(uploadsLeft) && ` ${uploadsLeft} upload${uploadsLeft === 1 ? "" : "s"} left today.`}{" "}
+              Text is sent to Google and Groq to answer questions, so upload only what you are fine sharing.{" "}
+              <Link href="/privacy">Privacy</Link>
             </span>
             {limits.documents.limit ? (
               <>
@@ -165,7 +172,9 @@ export function Library(p: Props) {
                 dev login
               </button>
             )}
-            <span>Samples work without an account. Sign in to upload PDFs only you can see.</span>
+            <span>
+              Samples work without an account. Sign in to upload PDFs only you can see. <Link href="/privacy">Privacy</Link>
+            </span>
           </>
         )}
         {limits?.signed_in && (

@@ -221,3 +221,35 @@ def test_visitor_salt_is_never_a_public_default_when_a_secret_exists():
     assert Settings(_env_file=None, api_token_secret=secret).salt != secret  # derived, not reused
     assert Settings(_env_file=None, visitor_salt="mine", api_token_secret=secret).salt == "mine"
     assert Settings(_env_file=None, api_token_secret="").salt == "lexio"  # local development only
+
+
+def test_blocked_regions_cover_eea_uk_and_switzerland():
+    blocked = set(Settings(_env_file=None).blocked_countries)
+    # 27 EU members + Iceland, Liechtenstein, Norway + Switzerland + United Kingdom
+    assert len(blocked) == 27 + 3 + 2
+    assert {"DE", "FR", "IE", "NO", "CH", "GB"} <= blocked
+    assert not {"US", "IN", "CA"} & blocked
+
+
+def test_blocked_countries_are_normalised():
+    s = Settings(_env_file=None, blocked_countries=["de", " fr ", ""])
+    assert s.blocked_countries == ["DE", "FR"]
+
+
+def test_require_region_blocks_only_listed_countries():
+    import pytest
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from app.main import require_region
+
+    def req(country):
+        headers = [(b"x-vercel-ip-country", country.encode())] if country else []
+        return Request({"type": "http", "headers": headers})
+
+    require_region(req("US"))
+    require_region(req(""))  # no header (local development): allowed
+    for code in ("DE", "gb", "CH"):
+        with pytest.raises(HTTPException) as exc:
+            require_region(req(code))
+        assert exc.value.status_code == 451

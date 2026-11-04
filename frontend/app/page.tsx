@@ -1,9 +1,28 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { Logo } from "@/components/Logo";
 import { SignInButton } from "@/components/SignInButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { REPO_URL, SAMPLE_QUESTIONS } from "@/lib/samples";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
+
+// Structured data for search engines. `<` is escaped so no field can close the script tag.
+const JSON_LD = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: SITE_NAME,
+  url: `${SITE_URL}/`,
+  description: SITE_DESCRIPTION,
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Any",
+  browserRequirements: "Requires JavaScript",
+  isAccessibleForFree: true,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  sameAs: [REPO_URL],
+}).replace(/</g, "\\u003c");
 
 // From backend/evals/results/answers-gemini.md (Gemini embeddings, gpt-oss-120b, all nine documents).
 const EVIDENCE = [
@@ -22,6 +41,7 @@ const STEPS = [
 export default function Landing() {
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON_LD }} />
       <a className="skip" href="#main">
         Skip to content
       </a>
@@ -141,7 +161,7 @@ export default function Landing() {
         <footer className="footer">
           <span>Built with FastAPI, Postgres + pgvector and Next.js. Open source.</span>
           <span>
-            Not legal advice. Sample documents are public; sources and licences are in the{" "}
+            <Link href="/privacy">Privacy</Link>. Not legal advice. Sample documents are public; sources and licences are in the{" "}
             <a href={`${REPO_URL}/blob/main/data/samples/NOTICE.md`}>notice</a>.
           </span>
         </footer>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import {
@@ -118,6 +119,7 @@ export function Workspace() {
   const questionsLeft = limits ? Math.min(left(limits.questions), left(limits.site_questions)) : Infinity;
   const outOfQuestions = questionsLeft === 0;
   const noDocs = docs.length === 0;
+  const regionBlocked = limits?.region_blocked === true; // only for the notice below
   const canPick = !busy && !outOfQuestions && !noDocs;
   const canAsk = canPick && input.trim().length >= 2;
 
@@ -362,6 +364,14 @@ export function Workspace() {
               if (canAsk) ask(input.trim());
             }}
           >
+            {regionBlocked && (
+              <p className="notice" role="status">
+                In your region, search uses keyword matching (helped by an AI-written hint) and uploads are off, because the free
+                AI service this demo uses for its full search is not licensed there. The suggested questions still use the full
+                search. A question phrased very differently from the documents may occasionally miss.{" "}
+                <Link href="/privacy">Why?</Link>
+              </p>
+            )}
             {outOfQuestions && limits && (
               <p className="notice quota" role="status">
                 {left(limits.questions) === 0

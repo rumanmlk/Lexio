@@ -71,12 +71,21 @@ class QuotaStop(Exception):
     """The LLM's daily quota ran out; stop and keep what is done."""
 
 
-async def search(pool, embedder, s, query: str, owner: str = "eval"):
-    from app import retrieval
+# Set by --no-gemini: search the way visitors from regions without Gemini access are served
+# (keyword search plus an LLM-written passage, no similarity gate; see chat() in app/main.py).
+NO_GEMINI = False
 
+
+async def search(pool, embedder, s, query: str, owner: str = "eval", llm=None):
+    from app import rag, retrieval
+
+    expansion = ""
+    if NO_GEMINI and llm is not None:
+        expansion = await rag.hypothetical_passage(llm, query, deadline=None)
     return await retrieval.retrieve(
         pool, embedder, query, owners=[owner], candidates=s.retrieve_candidates,
         top_k=s.retrieve_top_k, keyword_weight=s.keyword_weight,
+        mode="keyword" if NO_GEMINI else "hybrid", expansion=expansion,
     )
 
 
@@ -87,9 +96,10 @@ async def ask(pool, embedder, llm, s, question: str, owner: str = "eval", histor
 
     turns = [rag.Turn(**t) for t in history or []]
     query = await rag.standalone_question(llm, turns, question, deadline=None)
-    result = await search(pool, embedder, s, query, owner)
+    result = await search(pool, embedder, s, query, owner, llm)
     out = {"query": query, "text": "", "done": {}, "sources": [], "error": None, "quota": False}
-    async for ev in rag.answer_stream(llm, query, result, min_similarity=s.min_similarity):
+    gate = 0.0 if NO_GEMINI else s.min_similarity
+    async for ev in rag.answer_stream(llm, query, result, min_similarity=gate):
         name, data = rag.parse_sse(ev)
         if name == "sources":
             out["sources"] = data["sources"]

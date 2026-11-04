@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     # so the number of tickets (not only of finished uploads) is limited. 0 turns it off.
     upload_ticket_limit: int = 30
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Google's Gemini terms allow only its paid service for users in the EEA, Switzerland and the
+    # UK, and this deployment uses the free tier. Requests from these countries (ISO codes, from
+    # Vercel's x-vercel-ip-country header) are refused on the routes that call Gemini. Set to []
+    # on a paid Gemini plan. Without the header (local development) nothing is blocked.
+    blocked_countries: list[str] = [
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT",
+        "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",  # EU
+        "IS", "LI", "NO",  # rest of the EEA
+        "CH", "GB",
+    ]
 
     # Sign-in (app/auth.py). The Next.js app mints a short-lived HS256 token for the signed-in
     # user and signs it with this secret, so both sides must share it. Empty: every token is
@@ -117,6 +127,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _defaults(self):
+        # Compared against an upper-cased header, so a lower-case or padded entry must still match.
+        self.blocked_countries = [c.strip().upper() for c in self.blocked_countries if c.strip()]
         if self.min_similarity is None:
             self.min_similarity = THRESHOLDS[self.embedding_provider]
         demo = self.demo_mode

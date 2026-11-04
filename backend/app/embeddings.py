@@ -1,6 +1,9 @@
 import asyncio
 import hashlib
+import json
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -67,6 +70,28 @@ class GeminiEmbedder:
 
     async def embed_query(self, text: str) -> list[float]:
         return (await self._batch([f"task: search result | query: {text}"]))[0]
+
+
+SAMPLE_QUERIES_FILE = Path(__file__).with_name("sample_queries.json")
+
+
+@lru_cache
+def sample_queries() -> dict[str, list[float]]:
+    """The sample questions with their stored query vectors (evals/export_sample_queries.py)."""
+    return json.loads(SAMPLE_QUERIES_FILE.read_text(encoding="utf-8"))
+
+
+class StoredQueryEmbedder:
+    """Answers query embeddings from the stored vectors of the sample questions and never calls a
+    provider. It serves visitors from regions where Google's terms do not allow the Gemini free
+    tier: the suggested sample questions get the full hybrid search, and nothing they send reaches
+    Gemini."""
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("StoredQueryEmbedder cannot embed documents")
+
+    async def embed_query(self, text: str) -> list[float]:
+        return sample_queries()[text]
 
 
 class LocalEmbedder:

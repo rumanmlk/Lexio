@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from app import budget, ingest, rag, retrieval, storage, tracing
 from app.auth import SAMPLES, User, Who
 from app.config import Settings, get_settings
 from app.db import apply_migrations, open_pool
-from app.embeddings import build_embedder
+from app.embeddings import StoredQueryEmbedder, build_embedder, sample_queries
 from app.errors import ProviderError, duration
 from app.llm import GroqLLM
 
@@ -106,6 +106,26 @@ async def refund_if_unanswered(stream, pool, receipt: budget.Receipt | None):
         yield chunk
 
 
+def region_blocked(request: Request) -> bool:
+    """True for a visitor in a region where Google's terms do not allow the Gemini free tier
+    (see Settings.blocked_countries). No header (local development): not blocked."""
+    country = request.headers.get("x-vercel-ip-country", "").strip().upper()
+    return bool(country) and country in get_settings().blocked_countries
+
+
+def require_region(request: Request) -> None:
+    """Refuse the upload routes, which send document text to Gemini, in a blocked region."""
+    if region_blocked(request):
+        raise HTTPException(
+            451,
+            "Uploading documents is not available in your region, because the free AI service "
+            "this demo runs on is not licensed for it. See the privacy page.",
+        )
+
+
+Region = Depends(require_region)
+
+
 def require_writable(s: Settings) -> None:
     """Switched off with UPLOADS_ENABLED=false; sign-in is checked separately (401)."""
     if not s.uploads_enabled:
@@ -186,7 +206,7 @@ def check_pdf(s: Settings, filename: str | None, data: bytes) -> None:
         raise HTTPException(415, "File is not a valid PDF")
 
 
-@app.post("/api/documents", status_code=201)
+@app.post("/api/documents", status_code=201, dependencies=[Region])
 async def upload_document(request: Request, who: User, file: UploadFile):
     s = get_settings()
     require_writable(s)
@@ -222,7 +242,7 @@ class RegisterRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
 
 
-@app.post("/api/documents/register", status_code=201)
+@app.post("/api/documents/register", status_code=201, dependencies=[Region])
 async def register_document(body: RegisterRequest, request: Request, who: User):
     """Second half of a direct-to-storage upload: the browser has put the PDF in Blob; this checks
     it belongs to the caller, reads and indexes it, and keeps it (or deletes it if it is rejected
@@ -451,6 +471,7 @@ async def limits(request: Request, who: Who):
         raise HTTPException(503, "Database unavailable") from exc
 
     prefix = storage.user_prefix(who.user_id) if s.blob_enabled and who.user_id else None
+    blocked = region_blocked(request)
 
     def entry(key: str, limit: int | None) -> dict:
         return {"used": used[key], "limit": limit}
@@ -459,7 +480,9 @@ async def limits(request: Request, who: Who):
         "demo_mode": s.demo_mode,
         "signed_in": who.signed_in,
         # can this caller upload and delete right now (anonymous visitors never can)
-        "uploads_enabled": s.uploads_enabled and who.signed_in,
+        "uploads_enabled": s.uploads_enabled and who.signed_in and not blocked,
+        # uploads are refused in this visitor's region; questions use keyword search (see chat)
+        "region_blocked": blocked,
         "documents": {"used": docs_used, "limit": s.user_max_documents},
         "storage_mb": {"used": round(bytes_used / 1024 / 1024, 1), "limit": s.user_max_mb},
         "max_upload_mb": s.max_upload_mb,
@@ -482,6 +505,22 @@ async def chat(body: ChatRequest, request: Request, who: Who):
     # The query embedding is counted, never refused: it spends the reserve uploads leave alone.
     if body.document_ids:
         await require_visible(pool, who.owners, set(body.document_ids))
+    # A visitor from a blocked region (see require_region) must not cause a Gemini call. Their
+    # question is searched without an embedding: by keyword alone (Postgres full-text search), or,
+    # for the suggested sample questions, with the stored vector for the usual hybrid search.
+    # Answers are still written by Groq.
+    no_gemini = region_blocked(request)
+    mode: retrieval.Mode = "hybrid"
+    expand_search = False
+    embedder, min_similarity = request.app.state.embedder, s.min_similarity
+    if no_gemini:
+        if not body.history and body.question in sample_queries():
+            embedder = StoredQueryEmbedder()
+        else:
+            # There is no similarity score without a vector, so the similarity gate cannot apply;
+            # only "no keyword hit at all" refuses, and the model's own instructions do the rest.
+            mode, min_similarity = "keyword", 0.0
+            expand_search = True
     claims = []
     if s.visitor_question_limit:
         claims.append(budget.Claim(
@@ -491,7 +530,7 @@ async def chat(body: ChatRequest, request: Request, who: Who):
         claims.append(budget.Claim(
             budget.QUESTIONS, 1, s.question_daily_limit,
             "The demo has answered all the questions the free tier allows today."))
-    if s.embed_daily_limit:
+    if s.embed_daily_limit and not no_gemini:  # no Gemini request is made for these visitors
         claims.append(budget.Claim(budget.EMBEDDINGS, 1, None, ""))
     receipt = await claim_budget(pool, claims) if claims else None
     trace = tracing.start(
@@ -508,16 +547,21 @@ async def chat(body: ChatRequest, request: Request, who: Who):
             trace.timed("generation", "rewrite", time.monotonic() - t0, model=s.groq_model,
                         metadata={"rewritten": query != body.question},
                         **({"input": body.question, "output": query} if trace.content else {}))
+        expansion = ""
+        if expand_search:
+            expansion = await rag.hypothetical_passage(request.app.state.llm, query)
         t0 = time.monotonic()
         result = await retrieval.retrieve(
             pool,
-            request.app.state.embedder,
+            embedder,
             query,
             owners=who.owners,
             document_ids=body.document_ids,
             candidates=s.retrieve_candidates,
             top_k=s.retrieve_top_k,
             keyword_weight=s.keyword_weight,
+            mode=mode,
+            expansion=expansion,
         )
     except ProviderError as exc:
         await provider_failed(pool, s, receipt, exc)
@@ -530,11 +574,12 @@ async def chat(body: ChatRequest, request: Request, who: Who):
         trace.timed("span", "retrieval", time.monotonic() - t0, metadata={
             "hits": len(result.hits), "top_similarity": round(result.top_similarity, 4),
             "keyword_match": result.has_keyword_match,
-            "refused_for_low_similarity": rag.should_refuse(result, s.min_similarity),
+            "refused_for_low_similarity": rag.should_refuse(result, min_similarity),
+            "search_mode": mode,
         }, **({"input": query, "output": [f"{h.filename} p.{h.page}" for h in result.hits]}
               if trace.content else {}))
     stream = rag.answer_stream(
-        request.app.state.llm, query, result, min_similarity=s.min_similarity
+        request.app.state.llm, query, result, min_similarity=min_similarity
     )
     return StreamingResponse(
         tracing.traced(refund_if_unanswered(stream, pool, receipt), trace, s),
