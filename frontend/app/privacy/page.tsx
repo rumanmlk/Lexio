@@ -112,9 +112,11 @@ export default function Privacy() {
           <h3>Your questions</h3>
           <p>
             Questions and answers are processed to produce a reply, and the conversation is kept only in your browser tab. The
-            server does not store your questions or the answers. The app can send performance traces (timings and counts, not the
-            text of questions or answers) to Langfuse, but this is switched off unless the operator turns it on, and it is off
-            at the time of writing.
+            server does not store your questions or the answers. For each question the app sends a performance trace to Langfuse,
+            a monitoring service. It holds timings, counts and yes/no flags (for example how long the answer took, how many
+            passages were found and whether the answer was backed by your documents), and the same keyed hash used for the daily
+            limits, so the operator can tell whether several questions came from one visitor. It does not hold your IP address, your account
+            ID, the text of your question, the passages found or the answer.
           </p>
 
           <h3>Cookies and browser storage</h3>
@@ -176,6 +178,14 @@ export default function Privacy() {
                   <td>The database described above (hosted in the AWS US East region)</td>
                   <td>Storing passages, embeddings and counters</td>
                 </tr>
+                <tr>
+                  <th scope="row">Langfuse</th>
+                  <td>
+                    Timings, counts and flags for each question, and the keyed hash described above. Not the question, the
+                    passages or the answer
+                  </td>
+                  <td>Monitoring speed and reliability</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -226,6 +236,10 @@ export default function Privacy() {
                 <tr>
                   <th scope="row">Daily limit counters (keyed hash of your IP or account ID)</th>
                   <td>7 days</td>
+                </tr>
+                <tr>
+                  <th scope="row">Performance traces at Langfuse (timings, counts, flags, keyed hash)</th>
+                  <td>Until the operator deletes them in Langfuse; they hold no question or answer text</td>
                 </tr>
                 <tr>
                   <th scope="row">Session cookie</th>

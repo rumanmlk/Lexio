@@ -21,6 +21,10 @@ os.environ.setdefault("DATABASE_URL", "postgresql://lexio:lexio@localhost:5433/l
 os.environ["EMBEDDING_PROVIDER"] = "hash"
 os.environ["API_TOKEN_SECRET"] = "test-secret-test-secret-test-secret-0123"
 os.environ["ALLOW_DEV_USERS"] = "true"
+# A developer's own .env may hold real Langfuse keys; the tests must never send traces with them.
+# The tracing tests switch it on themselves, against a mocked Langfuse.
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -406,6 +410,14 @@ def test_anonymous_identity_ignores_forwarded_header_unless_trusted(anon, limits
     assert ask(anon, **{"x-forwarded-for": "10.0.0.3"}).status_code == 429
     # an appended spoof must not help: only the proxy's own (last) entry counts
     assert ask(anon, **{"x-forwarded-for": "10.0.0.9, 10.0.0.3"}).status_code == 429
+
+
+def test_anonymous_ipv6_visitor_is_counted_per_64(anon, limits):
+    limits(visitor_question_limit=1, trust_forwarded_for=True)
+    assert ask(anon, **{"x-forwarded-for": "2001:db8:1:2::1"}).status_code == 200
+    # another address in the same /64 is the same connection, not a fresh visitor
+    assert ask(anon, **{"x-forwarded-for": "2001:db8:1:2:ffff::9"}).status_code == 429
+    assert ask(anon, **{"x-forwarded-for": "2001:db8:1:3::1"}).status_code == 200  # a different /64
 
 
 def test_uploads_switch_turns_off_upload_and_delete_for_everyone(client, limits, indexed):

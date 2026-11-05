@@ -7,6 +7,7 @@ A header that is present but invalid is a 401, never a silent downgrade to anony
 
 import hashlib
 import hmac
+import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Annotated
@@ -63,13 +64,29 @@ def verify_token(token: str, s: Settings) -> str:
     return sub
 
 
+def visitor_address(ip: str) -> str:
+    """What identifies a visitor behind this address. An IPv6 customer is given a whole /64 and can
+    switch to any address inside it, so counting single addresses would hand them a fresh daily
+    allowance per request; the /64 is the unit that is one connection. IPv4, and anything that is
+    not an address, is kept as it came (so existing counters carry over)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr.ipv4_mapped:  # ::ffff:1.2.3.4 is the IPv4 client 1.2.3.4
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.IPv6Address(int(addr) >> 64 << 64))
+    return ip
+
+
 def _client_ip_key(request: Request, s: Settings) -> str:
     """Behind a proxy that sets X-Forwarded-For itself, its last entry is the real client;
     trusting the header anywhere else would let a visitor pick their own identity."""
     ip = request.client.host if request.client else "unknown"
     if s.trust_forwarded_for and (fwd := request.headers.get("x-forwarded-for", "").strip()):
         ip = fwd.split(",")[-1].strip()
-    return _hash(s, ip)
+    return _hash(s, visitor_address(ip))
 
 
 def identity(request: Request) -> Identity:

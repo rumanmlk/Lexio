@@ -1,5 +1,6 @@
 import asyncio
 
+from app.auth import visitor_address
 from app.config import Settings
 from app.embeddings import HashEmbedder
 from app.errors import ProviderError
@@ -253,3 +254,14 @@ def test_require_region_blocks_only_listed_countries():
         with pytest.raises(HTTPException) as exc:
             require_region(req(code))
         assert exc.value.status_code == 451
+
+
+def test_visitor_address_counts_an_ipv6_connection_once():
+    # every address in one /64 is the same visitor: a customer can hop within it freely
+    assert visitor_address("2001:db8:1:2::1") == visitor_address("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+    assert visitor_address("2001:db8:1:2::1") != visitor_address("2001:db8:1:3::1")  # next /64
+    assert visitor_address("2001:DB8:1:2::1") == visitor_address("2001:db8:1:2::1")  # spelling
+    assert visitor_address("::ffff:203.0.113.7") == "203.0.113.7"  # an IPv4 client seen via IPv6
+    # IPv4 and non-addresses are untouched, so counters keyed on them carry over
+    assert visitor_address("203.0.113.7") == "203.0.113.7"
+    assert visitor_address("unknown") == "unknown"

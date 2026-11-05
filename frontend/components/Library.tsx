@@ -95,7 +95,7 @@ export function Library(p: Props) {
         </ul>
         {docs.length > 1 && (
           <p className="muted small" style={{ padding: "8px 8px 0" }}>
-            {p.selected.size ? `Searching ${p.selected.size} selected.` : "Searching all documents."} Tick documents to narrow it.
+            {p.selected.size ? `${p.selected.size} of ${docs.length} selected.` : "All documents are included."} Tick documents to narrow it.
           </p>
         )}
       </div>

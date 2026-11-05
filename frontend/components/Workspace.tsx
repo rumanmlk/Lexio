@@ -29,6 +29,8 @@ import { Message, type ChatMessage } from "./Message";
 
 // The server reads only the last 6 turns of history and rejects a request with more than 20.
 const HISTORY_TURNS = 6;
+const REGION_NOTICE_KEY = "lexio.regionNoticeSeen";
+const DRAWER_QUERY = "(max-width: 1100px)"; // the breakpoint in globals.css where the library becomes a drawer
 
 export function Workspace() {
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -45,6 +47,7 @@ export function Workspace() {
   const [loaded, setLoaded] = useState(false);
   const [confirmAsk, setConfirmAsk] = useState<Confirm | null>(null);
   const [status, setStatus] = useState("");
+  const [regionSeen, setRegionSeen] = useState(true); // true until storage says otherwise: no flash
   const abort = useRef<AbortController | null>(null);
   const nextId = useRef(1);
   const bottom = useRef<HTMLDivElement>(null);
@@ -63,6 +66,24 @@ export function Workspace() {
       setLoaded(true);
     }
   }, []);
+
+  // The region notice is shown until it is acknowledged once; storage can be blocked, so it
+  // then still hides for the rest of this visit.
+  useEffect(() => {
+    try {
+      setRegionSeen(localStorage.getItem(REGION_NOTICE_KEY) === "1");
+    } catch {
+      setRegionSeen(false);
+    }
+  }, []);
+  function dismissRegionNotice() {
+    setRegionSeen(true);
+    try {
+      localStorage.setItem(REGION_NOTICE_KEY, "1");
+    } catch {
+      // private mode or blocked storage: dismissed for this visit only
+    }
+  }
 
   const refreshLimits = useCallback(() => getLimits().then(setLimits).catch(() => {}), []);
 
@@ -160,6 +181,7 @@ export function Workspace() {
     };
     let streamed = false;
     let sourceCount = 0;
+    let refused = false;
     let full = "";
     try {
       const stream = await openChat(
@@ -174,7 +196,10 @@ export function Workspace() {
           streamed = true;
           full += ev.text;
           patch(reply.id, (m) => ({ ...m, text: m.text + ev.text }));
-        } else if (ev.type === "done") patch(reply.id, (m) => ({ ...m, grounded: ev.grounded, refused: ev.refused, evidence: ev.evidence }));
+        } else if (ev.type === "done") {
+          refused = ev.refused === true;
+          patch(reply.id, (m) => ({ ...m, grounded: ev.grounded, refused: ev.refused, evidence: ev.evidence }));
+        }
         else if (ev.type === "error") {
           const error = { message: ev.message, quota: ev.quota };
           if (streamed) patch(reply.id, (m) => ({ ...m, error }));
@@ -182,7 +207,11 @@ export function Workspace() {
         }
       }
       // One announcement when the answer is complete, not one per token.
-      if (streamed) setStatus(`Answer ready. ${spoken(full)} ${sourceCount} ${sourceCount === 1 ? "passage" : "passages"} searched.`);
+      if (streamed) {
+        // A refusal found nothing to answer with: its nearest matches are not worth announcing.
+        const searched = refused ? "" : ` ${sourceCount} ${sourceCount === 1 ? "passage" : "passages"} searched.`;
+        setStatus(`Answer ready. ${spoken(full)}${searched}`);
+      }
     } catch (e) {
       const aborted = (e as Error).name === "AbortError";
       const error = aborted
@@ -277,13 +306,23 @@ export function Workspace() {
   // Stable between tokens, so a streaming answer does not re-render every earlier message.
   const openPage = useMemo(() => (view ? { documentId: view.documentId, page: view.page } : null), [view?.documentId, view?.page]);
 
+  // A state, not an action: the question has not been asked yet when this is first shown.
+  // Narrow screens keep the library in a drawer; on wide ones it is always on screen, so the chip
+  // sends the keyboard to its first checkbox instead of opening nothing.
+  function chooseDocuments() {
+    if (matchMedia(DRAWER_QUERY).matches) setLibOpen(true);
+    else document.querySelector<HTMLElement>("#library input[type=checkbox]")?.focus();
+  }
+
   const scope = !loaded
     ? "Loading documents…"
     : noDocs
     ? "No documents"
     : selected.size
-      ? `Searching ${selected.size} of ${docs.length} documents`
-      : `Searching ${docs.length === 1 ? "1 document" : `all ${docs.length} documents`}`;
+      ? `${selected.size} of ${docs.length} documents selected`
+      : docs.length === 1
+        ? "1 document"
+        : `All ${docs.length} documents`;
 
   return (
     <div className="app" data-evidence={view ? "open" : "closed"}>
@@ -318,9 +357,12 @@ export function Workspace() {
       <main className="chat">
         <div className="bar">
           <div className="bar-left">
-            <button type="button" className="chip scope" onClick={() => setLibOpen(true)} aria-controls="library" aria-label={`${scope}. Open the library`}>
+            <button type="button" className="chip scope" onClick={chooseDocuments} aria-controls="library" aria-label={`${scope}. Choose which documents to ask`}>
               <Icon name="library" />
               <span className="t">{scope}</span>
+              <span className="scope-go">
+                <Icon name="down" />
+              </span>
             </button>
           </div>
           {messages.length > 0 && (
@@ -339,6 +381,12 @@ export function Workspace() {
                   Answers come only from the selected documents. Every claim links to the page it came from, and Lexio says so when the
                   answer isn&apos;t there.
                 </p>
+                {docs.length > 1 && (
+                  <p>
+                    <span className="wide-only">Tick documents in the library to ask about just those.</span>
+                    <span className="narrow-only">Tap the documents button above to ask about just some of them.</span>
+                  </p>
+                )}
                 <div className="suggest">
                   {SAMPLE_QUESTIONS.map((q) => (
                     <button key={q} type="button" disabled={!canPick} onClick={() => ask(q)}>
@@ -364,12 +412,17 @@ export function Workspace() {
               if (canAsk) ask(input.trim());
             }}
           >
-            {regionBlocked && (
-              <p className="notice" role="status">
-                In your region, search uses keyword matching (helped by an AI-written hint) and uploads are off, because the free
-                AI service this demo uses for its full search is not licensed there. The suggested questions still use the full
-                search. A question phrased very differently from the documents may occasionally miss.{" "}
-                <Link href="/privacy">Why?</Link>
+            {regionBlocked && !regionSeen && (
+              <p className="notice info dismissible" role="status">
+                <span>
+                  In your region, search uses keyword matching (helped by an AI-written hint) and uploads are off, because the free
+                  AI service this demo uses for its full search is not licensed there. The suggested questions still use the full
+                  search. A question phrased very differently from the documents may occasionally miss.{" "}
+                  <Link href="/privacy">Why?</Link>
+                </span>
+                <button type="button" className="btn-text" onClick={dismissRegionNotice}>
+                  Got it
+                </button>
               </p>
             )}
             {outOfQuestions && limits && (
