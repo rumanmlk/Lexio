@@ -154,7 +154,11 @@ export const Message = memo(function Message({
       {done && others.length > 0 && (
         <details className="more">
           <summary>
-            {cited.length ? `${plural(others.length, "other passage")} searched` : `${plural(others.length, "passage")} searched`}
+            {message.refused
+              ? `Closest ${plural(others.length, "passage")}, none answered the question`
+              : cited.length
+                ? `${plural(others.length, "other passage")} searched`
+                : `${plural(others.length, "passage")} searched`}
           </summary>
           <ul className="cited">
             {others.map(row)}
