@@ -118,6 +118,6 @@ cd frontend && npm test && npm run typecheck             # stream parser, citati
 
 Working end to end: retrieval and citations, streaming chat, the page viewer, Google sign-in with per-user documents and limits, direct-to-Blob uploads, optional Langfuse tracing, and scheduled evaluations in CI. The original Streamlit, FAISS and Ollama prototype is preserved at [commit `38f8892`](https://github.com/rumanmlk/Lexio/tree/38f8892).
 
-Issues and pull requests are welcome. Please run the tests and `ruff check` first.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks to run first, [SECURITY.md](SECURITY.md) to report a vulnerability privately, and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Not legal advice. Released under the [MIT licence](LICENSE).

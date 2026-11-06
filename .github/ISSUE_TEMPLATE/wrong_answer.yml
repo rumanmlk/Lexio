@@ -1,0 +1,41 @@
+name: Wrong or ungrounded answer
+description: The answer was wrong, cited the wrong page, or was refused when it should not have been
+labels: [answer-quality]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Answer quality is measured on a small evaluation set (see docs/evaluation.md), so real failures are useful. Please only use the public sample documents, or describe a document without sharing private content.
+  - type: input
+    id: document
+    attributes:
+      label: Document
+      description: Which document, and which page holds the right answer?
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question asked
+      description: The exact wording, and the earlier messages if it was a follow-up.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong?
+      options:
+        - The answer was wrong
+        - It cited the wrong page
+        - It refused although the document has the answer
+        - It answered although the document does not say
+        - The highlighted passage was misleading
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should it have said?
+      description: Include the page number and the passage that supports it.
+    validations:
+      required: true
