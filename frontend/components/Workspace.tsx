@@ -18,6 +18,7 @@ import {
   type Source,
   type Turn,
 } from "@/lib/api";
+import { prefetchDocument } from "@/lib/documents";
 import { readEvents } from "@/lib/sse";
 import { SAMPLE_QUESTIONS } from "@/lib/samples";
 import { docTitle } from "@/lib/title";
@@ -191,6 +192,8 @@ export function Workspace() {
       for await (const ev of readEvents(stream)) {
         if (ev.type === "sources") {
           sourceCount = ev.sources.length;
+          // The best-ranked source is the one most often opened first: warm it while the answer is written.
+          if (ev.sources[0]) prefetchDocument(ev.sources[0].document_id, ev.sources[0].page);
           patch(reply.id, (m) => ({ ...m, sources: ev.sources, query: ev.query }));
         } else if (ev.type === "token") {
           streamed = true;

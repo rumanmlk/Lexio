@@ -7,7 +7,7 @@ from uuid import UUID
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
@@ -18,6 +18,7 @@ from app.db import apply_migrations, open_pool
 from app.embeddings import StoredQueryEmbedder, build_embedder, sample_queries
 from app.errors import ProviderError, duration
 from app.llm import GroqLLM
+from app.ranges import RangeNotSatisfiable, parse_range, part_headers, slice_stream
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,11 @@ app.add_middleware(
     allow_origins=get_settings().cors_origins,
     allow_methods=["GET", "POST", "DELETE"],
     # "*" does not cover Authorization in browsers, so it is named.
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Range"],
+    # A script may only read these response headers when they are named: the viewer needs them to
+    # learn the file's size and which part it was given.
+    expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"],
+    max_age=600,  # Authorization forces a preflight on each call; let the browser remember it
 )
 
 
@@ -375,49 +380,104 @@ async def list_documents(request: Request, who: Who):
 
 @app.get("/api/documents/{document_id}/file")
 async def document_file(document_id: UUID, request: Request, who: Who):
+    wanted = request.headers.get("range")
     async with request.app.state.pool.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT f.data, d.owner_id, d.blob_path FROM documents d "
+                "SELECT d.owner_id, d.blob_path, octet_length(f.data) FROM documents d "
                 "LEFT JOIN document_files f ON f.document_id = d.id "
                 "WHERE d.id = %s AND d.owner_id = ANY(%s)",
                 (document_id, who.owners),
             )
         ).fetchone()
-    if not row or (row[0] is None and row[2] is None):
-        raise HTTPException(404, "Document file not found")
+        if not row or (row[2] is None and row[1] is None):
+            raise HTTPException(404, "Document file not found")
+        owner, blob_path, size = row
+        piece = None
+        if size is not None:
+            try:
+                piece = parse_range(wanted, size)
+            except RangeNotSatisfiable as exc:
+                return unsatisfiable(exc.size)
+            # Only the bytes asked for leave the database, not the whole file.
+            first, count = (piece[0] + 1, piece[1] - piece[0] + 1) if piece else (1, size)
+            cur = await conn.execute(
+                "SELECT substring(data from %s for %s) FROM document_files WHERE document_id = %s",
+                (first, count, document_id),
+            )
+            (raw,) = await cur.fetchone()
+            data = bytes(raw)
     # A browser cache is keyed by URL, not by who is signed in, so only the samples (readable by
     # everyone) may be cached; a user's own PDF must be checked again on every request.
-    cache = "private, max-age=3600" if row[1] == SAMPLES else "private, no-store"
+    cache = "private, max-age=3600" if owner == SAMPLES else "private, no-store"
     headers = {
         "Content-Disposition": "inline",
         "Cache-Control": cache,
+        "Accept-Ranges": "bytes",
         # Uploaded bytes: never let a browser reinterpret them as another type.
         "X-Content-Type-Options": "nosniff",
     }
     # Streamed: a Vercel function may not return a body over 4.5 MB in one piece, and the biggest
     # sample is 6 MB.
-    if row[0] is not None:
-        data = bytes(row[0])
+    if size is not None:
         headers["Content-Length"] = str(len(data))
+        if piece:
+            headers.update(part_headers(*piece, size))
         return StreamingResponse(
             (data[i : i + CHUNK] for i in range(0, len(data), CHUNK)),
+            status_code=206 if piece else 200,
             media_type="application/pdf",
             headers=headers,
         )
     s = get_settings()
     if not s.blob_enabled:
         raise HTTPException(404, "Document file not found")
+    if wanted:
+        try:
+            ranged = await storage.open_range(s, blob_path, wanted)
+        except storage.BlobMissing as exc:
+            raise HTTPException(404, "Document file not found") from exc
+        except RangeNotSatisfiable as exc:
+            return unsatisfiable(exc.size)
+        if ranged:
+            stream, stack, (first, last), total = ranged
+            headers.update(part_headers(first, last, total))
+            return StreamingResponse(
+                stream,
+                status_code=206,
+                media_type="application/pdf",
+                headers=headers,
+                background=BackgroundTask(stack.aclose),
+            )
     try:
-        stream, stack = await storage.open_stream(s, row[2])
+        stream, stack, total = await storage.open_stream(s, blob_path)
     except storage.BlobMissing as exc:
         raise HTTPException(404, "Document file not found") from exc
+    status = 200
+    if total is not None:
+        headers["Content-Length"] = str(total)
+        try:
+            piece = parse_range(wanted, total)
+        except RangeNotSatisfiable as exc:
+            await stack.aclose()
+            return unsatisfiable(exc.size)
+        if piece:
+            # The storage SDK reads whole objects, so the bytes before the range are read and
+            # dropped here (a fast hop inside the cloud); the browser only receives the range.
+            stream = slice_stream(stream, *piece)
+            headers.update(part_headers(*piece, total))
+            status = 206
     return StreamingResponse(
         stream,
+        status_code=status,
         media_type="application/pdf",
         headers=headers,
         background=BackgroundTask(stack.aclose),
     )
+
+
+def unsatisfiable(size: int) -> Response:
+    return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
 
 
 @app.delete("/api/documents/{document_id}", status_code=204)

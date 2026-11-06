@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from app.auth import visitor_address
 from app.config import Settings
 from app.embeddings import HashEmbedder
@@ -265,3 +267,181 @@ def test_visitor_address_counts_an_ipv6_connection_once():
     # IPv4 and non-addresses are untouched, so counters keyed on them carry over
     assert visitor_address("203.0.113.7") == "203.0.113.7"
     assert visitor_address("unknown") == "unknown"
+
+
+# ---- byte ranges (app/ranges.py) -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("header", "size", "want"),
+    [
+        (None, 100, None),
+        ("bytes=0-9", 100, (0, 9)),
+        ("bytes=90-", 100, (90, 99)),
+        ("bytes=90-500", 100, (90, 99)),  # an end past the file is clamped
+        ("bytes=-10", 100, (90, 99)),
+        ("bytes=-500", 100, (0, 99)),  # a suffix longer than the file is the whole file
+        (" BYTES=5-5 ", 100, (5, 5)),
+        ("pages=1-2", 100, None),
+        ("bytes=0-4,10-14", 100, None),
+        ("bytes=9-2", 100, None),
+        ("bytes=-", 100, None),
+        ("bytes=a-b", 100, None),
+    ],
+)
+def test_parse_range(header, size, want):
+    from app.ranges import parse_range
+
+    assert parse_range(header, size) == want
+
+
+@pytest.mark.parametrize(
+    ("header", "size"), [("bytes=100-", 100), ("bytes=-0", 100), ("bytes=-5", 0)]
+)
+def test_parse_range_refuses_a_range_outside_the_file(header, size):
+    from app.ranges import RangeNotSatisfiable, parse_range
+
+    with pytest.raises(RangeNotSatisfiable) as exc:
+        parse_range(header, size)
+    assert exc.value.size == size
+
+
+async def test_slice_stream_cuts_across_chunk_boundaries_and_stops_early():
+    from app.ranges import slice_stream
+
+    data = bytes(range(256)) * 4
+    read = []
+
+    async def chunks():
+        for i in range(0, len(data), 100):
+            read.append(i)
+            yield data[i : i + 100]
+
+    got = b"".join([c async for c in slice_stream(chunks(), 150, 349)])
+    assert got == data[150:350]
+    assert read[-1] == 300  # nothing past the chunk holding the last byte was read
+
+
+# ---- ranged reads from Blob (app/storage.py) -------------------------------------------------
+
+
+class _Stub:
+    """Stands in for the Vercel SDK module: only what open_range uses."""
+
+    class BlobNotFoundError(Exception):
+        pass
+
+    def __init__(self, size=1000, missing=False, broken=False):
+        from types import SimpleNamespace
+
+        url = "https://store.private.blob.vercel-storage.com/u/x/a.pdf"
+        self.head = SimpleNamespace(url=url, size=size)
+        self.missing, self.broken = missing, broken
+
+    async def head_blob(self, pathname):
+        if self.missing:
+            raise self.BlobNotFoundError()
+        if self.broken:
+            raise RuntimeError("boom")
+        return self.head
+
+
+def _settings():
+    from app.config import Settings
+
+    return Settings(blob_read_write_token="tok")
+
+
+async def _open(monkeypatch, stub, wanted, respond):
+    import respx
+
+    from app import storage
+
+    monkeypatch.setattr(storage, "_blob", lambda s: stub)
+    monkeypatch.setattr(storage, "_ignores_ranges", False)
+    with respx.mock:
+        route = respx.get(stub.head.url).mock(side_effect=respond)
+        got = await storage.open_range(_settings(), "u/x/a.pdf", wanted)
+        body = None
+        if got:
+            body = b"".join([c async for c in got[0]])
+            await got[1].aclose()
+        return got, body, route
+
+
+async def test_open_range_asks_storage_for_just_those_bytes(monkeypatch):
+    import httpx
+
+    seen = {}
+
+    def respond(request):
+        seen.update(request.headers)
+        headers = {"content-range": "bytes 10-109/1000"}
+        return httpx.Response(206, content=b"x" * 100, headers=headers)
+
+    got, body, _ = await _open(monkeypatch, _Stub(), "bytes=10-109", respond)
+    assert body == b"x" * 100 and got[2] == (10, 109) and got[3] == 1000
+    assert seen["range"] == "bytes=10-109" and seen["authorization"] == "Bearer tok"
+
+
+async def test_open_range_falls_back_when_storage_ignores_the_range(monkeypatch):
+    import httpx
+
+    whole = lambda r: httpx.Response(200, content=b"y" * 1000)  # noqa: E731
+    got, _, _ = await _open(monkeypatch, _Stub(), "bytes=10-109", whole)
+    assert got is None
+    got, _, _ = await _open(
+        monkeypatch, _Stub(), "bytes=10-109",
+        lambda r: httpx.Response(206, content=b"z", headers={"content-range": "bytes 0-0/1000"}),
+    )
+    assert got is None  # a part other than the one asked for is not trusted
+
+
+async def test_open_range_stops_asking_once_storage_has_ignored_a_range(monkeypatch):
+    import httpx
+
+    from app import storage
+
+    asked = []
+
+    def whole(request):
+        asked.append(request)
+        return httpx.Response(200, content=b"y" * 1000)
+
+    stub = _Stub()
+    assert (await _open(monkeypatch, stub, "bytes=10-109", whole))[0] is None
+    assert len(asked) == 1 and storage._ignores_ranges is True
+    # Later requests in this process go straight to the ordinary read: no head call, no request.
+    stub.broken = True  # a head call would now fail loudly if it were made
+    assert await storage.open_range(_settings(), "u/x/a.pdf", "bytes=0-9") is None
+    assert len(asked) == 1
+
+
+async def test_open_range_keeps_trying_after_an_error_that_says_nothing_about_ranges(monkeypatch):
+    import httpx
+
+    from app import storage
+
+    got, _, _ = await _open(monkeypatch, _Stub(), "bytes=0-9", lambda r: httpx.Response(503))
+    assert got is None and storage._ignores_ranges is False
+
+
+async def test_open_range_falls_back_on_any_storage_failure_and_for_unranged_requests(monkeypatch):
+    import httpx
+
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    assert (await _open(monkeypatch, _Stub(), "bytes=0-9", boom))[0] is None
+    assert (await _open(monkeypatch, _Stub(broken=True), "bytes=0-9", boom))[0] is None
+    assert (await _open(monkeypatch, _Stub(), "pages=1", boom))[0] is None
+
+
+async def test_open_range_reports_missing_objects_and_unsatisfiable_ranges(monkeypatch):
+    from app.ranges import RangeNotSatisfiable
+    from app.storage import BlobMissing
+
+    with pytest.raises(BlobMissing):
+        await _open(monkeypatch, _Stub(missing=True), "bytes=0-9", None)
+    with pytest.raises(RangeNotSatisfiable):
+        await _open(monkeypatch, _Stub(size=100), "bytes=100-", None)

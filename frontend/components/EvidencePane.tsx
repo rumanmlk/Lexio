@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
-import { fetchDocumentFile } from "@/lib/api";
+import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import { acquireDocument, documentBlob, documentUrl, loadPdfjs } from "@/lib/documents";
 import { boxesFor, buildIndex, findPassage, type Box, type Placed } from "@/lib/highlight";
 import { docSource, docTitle } from "@/lib/title";
 import { Icon } from "./Icon";
@@ -10,36 +10,37 @@ import { Icon } from "./Icon";
 /** A page to show. `snippet` (the start of the cited passage) turns on highlighting; `n` is its citation number. */
 export type View = { documentId: string; filename: string; page: number; snippet?: string; sentence?: string; n?: number };
 
-type PdfJs = typeof import("pdfjs-dist");
-let pdfjs: Promise<PdfJs> | null = null;
-function loadPdfjs(): Promise<PdfJs> {
-  pdfjs ??= import("pdfjs-dist").then((m) => {
-    m.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-    return m;
-  });
-  return pdfjs;
-}
-
-// The last few documents opened, so reopening one (or flipping between two cited documents) does not
-// download it again. A page reload, which is also what signing out does, empties it.
-const KEEP_DOCUMENTS = 3;
-// Holds the request itself, so two components asking at once share one download.
-const blobs = new Map<string, Promise<Blob>>();
-function documentBlob(id: string): Promise<Blob> {
-  const hit = blobs.get(id) ?? fetchDocumentFile(id);
-  hit.catch(() => blobs.delete(id)); // a failed download is not worth keeping
-  blobs.delete(id);
-  blobs.set(id, hit); // most recently used goes last
-  if (blobs.size > KEEP_DOCUMENTS) blobs.delete(blobs.keys().next().value!);
-  return hit;
+/**
+ * Opens the whole file in a new tab. Only now is it downloaded, since the pane itself reads just the pages
+ * it shows, so the tab says what it is waiting for instead of sitting blank.
+ */
+function openFull(id: string, page: number) {
+  const tab = window.open("about:blank", "_blank"); // opened now, while the click still counts
+  const say = (text: string) => {
+    if (tab && !tab.closed) {
+      tab.document.title = "Lexio";
+      tab.document.body.style.cssText = "font: 16px system-ui; padding: 2rem";
+      tab.document.body.textContent = text;
+    }
+  };
+  say("Preparing the full PDF. A large file can take a minute…");
+  documentUrl(id).then(
+    (url) => {
+      if (!tab) window.open(`${url}#page=${page}`, "_blank");
+      else if (!tab.closed) tab.location.href = `${url}#page=${page}`;
+    },
+    (e: Error) => say(`Couldn't load the PDF: ${e.message}`),
+  );
 }
 
 const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 type Load =
   | { status: "loading" }
+  /** pdf.js could not read the file in pieces; the whole file is being fetched for the fallback below. */
+  | { status: "broken" }
   | { status: "error"; message: string }
-  | { status: "ready"; pdf: PDFDocumentProxy; url: string }
+  | { status: "ready"; pdf: PDFDocumentProxy }
   /** pdf.js could not open or draw the file; the browser's own viewer takes over. */
   | { status: "fallback"; url: string };
 
@@ -62,37 +63,44 @@ export function EvidencePane({ view, onPage, onClose }: { view: View; onPage: (p
 
   useEffect(() => closeBtn.current?.focus(), []);
 
-  // Load the file once per document.
+  // Open the document once per document. Only the pieces the shown page needs are fetched.
   useEffect(() => {
     let dead = false;
-    let loading: PDFDocumentLoadingTask | null = null;
-    let url: string | null = null;
     setLoad({ status: "loading" });
-    (async () => {
-      let blob: Blob;
-      try {
-        blob = await documentBlob(view.documentId);
-      } catch (e) {
-        if (!dead) setLoad({ status: "error", message: (e as Error).message });
-        return;
-      }
-      if (dead) return;
-      url = URL.createObjectURL(blob);
-      try {
-        const lib = await loadPdfjs();
-        loading = lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
-        const pdf = await loading.promise;
-        if (!dead) setLoad({ status: "ready", pdf, url });
-      } catch {
-        if (!dead) setLoad({ status: "fallback", url });
-      }
-    })();
+    const { pdf, failed, release } = acquireDocument(view.documentId);
+    const giveUp = () => !dead && setLoad({ status: "broken" });
+    failed.catch(giveUp);
+    pdf.then(
+      (doc) => !dead && setLoad({ status: "ready", pdf: doc }),
+      // Not being able to read it in pieces is not the end: the whole file may still open. A real
+      // failure (not found, not allowed, offline) shows up again there, with its message.
+      giveUp,
+    );
     return () => {
       dead = true;
-      void loading?.destroy();
-      if (url) URL.revokeObjectURL(url);
+      release();
     };
   }, [view.documentId]);
+
+  // The browser's own viewer, on the whole file, when pdf.js could not do it.
+  const broken = load.status === "broken";
+  useEffect(() => {
+    if (!broken) return;
+    let dead = false;
+    let url: string | null = null;
+    documentBlob(view.documentId).then(
+      (blob) => {
+        if (dead) return;
+        url = URL.createObjectURL(blob);
+        setLoad({ status: "fallback", url });
+      },
+      (e: Error) => !dead && setLoad({ status: "error", message: e.message }),
+    );
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [broken, view.documentId]);
 
   // Draw at the pane's width, so the page is readable without zooming. Measured once per frame.
   useEffect(() => {
@@ -113,7 +121,7 @@ export function EvidencePane({ view, onPage, onClose }: { view: View; onPage: (p
   }, []);
 
   const pdf = load.status === "ready" ? load.pdf : null;
-  const fail = () => setLoad((l) => (l.status === "ready" ? { status: "fallback", url: l.url } : l));
+  const fail = () => setLoad({ status: "broken" });
 
   // Read the page's text and place the passage. Does not depend on the width.
   useEffect(() => {
@@ -184,7 +192,7 @@ export function EvidencePane({ view, onPage, onClose }: { view: View; onPage: (p
   const pages = pdf?.numPages ?? null;
   const title = docTitle(view.filename);
   const source = docSource(view.filename);
-  const url = load.status === "ready" || load.status === "fallback" ? load.url : null;
+  const canOpenFull = load.status === "ready" || load.status === "fallback";
   // What was found applies only to the document page now showing; the previous page's size is kept meanwhile so the pane does not jump.
   const here = found && found.key === `${view.documentId}:${view.page}` ? found : null;
   const asked = Boolean(view.snippet || view.sentence);
@@ -255,10 +263,10 @@ export function EvidencePane({ view, onPage, onClose }: { view: View; onPage: (p
                 : "The highlight marks the retrieved passage."
               : "Pick a citation to see its passage highlighted."}
         </span>
-        {url && (
-          <a href={`${url}#page=${view.page}`} target="_blank" rel="noreferrer" className="btn-text evi-link">
+        {canOpenFull && (
+          <button type="button" className="btn-text evi-link" onClick={() => openFull(view.documentId, view.page)}>
             <Icon name="external" /> Full PDF
-          </a>
+          </button>
         )}
       </div>
     </aside>

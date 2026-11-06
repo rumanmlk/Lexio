@@ -1,3 +1,4 @@
+import { parseContentRange, rangeHeader } from "./ranges.ts";
 import { forgetToken, getToken } from "./token.ts";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -169,6 +170,21 @@ export async function deleteAccount(): Promise<void> {
 
 export async function fetchDocumentFile(id: string): Promise<Blob> {
   return (await request(`/api/documents/${id}/file`)).blob();
+}
+
+/** Some bytes of a document. `total` is the whole file's size, or null when the server did not say. */
+export type Piece = { bytes: Uint8Array; first: number; total: number | null };
+
+/**
+ * Bytes `first..last` (inclusive) of a document. A server that ignores the range sends the whole file
+ * (status 200), which comes back as one piece starting at 0, so callers get correct bytes either way.
+ */
+export async function fetchDocumentRange(id: string, first: number, last: number): Promise<Piece> {
+  const res = await request(`/api/documents/${id}/file`, { headers: { Range: rangeHeader(first, last) } });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (res.status !== 206) return { bytes, first: 0, total: bytes.length };
+  const got = parseContentRange(res.headers.get("Content-Range"));
+  return { bytes, first: got?.first ?? first, total: got?.total ?? null };
 }
 
 /** Opens the chat stream. Errors before the first byte (429, 503, ...) throw an ApiError. */
