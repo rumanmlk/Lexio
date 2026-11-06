@@ -590,7 +590,11 @@ def test_migration_004_renames_public_to_samples_and_records_sizes(client):
             if data:
                 conn.execute("INSERT INTO document_files VALUES (%s, %s)", (doc, data))
 
-    assert apply_migrations(target) == ["004_owners.sql", "005_blob_path.sql"]
+    assert apply_migrations(target) == [
+        "004_owners.sql",
+        "005_blob_path.sql",
+        "006_file_storage_external.sql",
+    ]
     with psycopg.connect(target) as conn:
         rows = conn.execute("SELECT owner_id, size_bytes FROM documents ORDER BY sha256").fetchall()
         assert rows == [("samples", 10), ("samples", 0)]  # no data moved; size only where known
@@ -844,6 +848,8 @@ class FakeBlob:
     def __init__(self):
         self.files: dict[str, bytes] = {}
         self.deleted: list[str] = []
+        self.ranged = False  # True: storage honours a ranged read, as the real one may
+        self.range_reads: list[tuple[int, int]] = []
 
     def put(self, user_id: str, name: str, data: bytes) -> str:
         path = storage.user_prefix(user_id) + name
@@ -871,7 +877,7 @@ def blob(clean, monkeypatch):
             for i in range(0, len(data), 100_000):
                 yield data[i : i + 100_000]
 
-        return chunks(), AsyncExitStack()
+        return chunks(), AsyncExitStack(), len(fake.files[pathname])
 
     async def delete(s, pathnames):
         for p in pathnames:
@@ -879,7 +885,26 @@ def blob(clean, monkeypatch):
             fake.deleted.append(p)
 
     monkeypatch.setattr(storage, "read", read)
+    async def open_range(s, pathname, wanted):
+        from contextlib import AsyncExitStack
+
+        from app.ranges import parse_range
+
+        if pathname not in fake.files:
+            raise storage.BlobMissing(pathname)
+        data = fake.files[pathname]
+        piece = parse_range(wanted, len(data)) if fake.ranged else None
+        if piece is None:
+            return None
+
+        async def chunks():
+            fake.range_reads.append(piece)
+            yield data[piece[0] : piece[1] + 1]
+
+        return chunks(), AsyncExitStack(), piece, len(data)
+
     monkeypatch.setattr(storage, "open_stream", open_stream)
+    monkeypatch.setattr(storage, "open_range", open_range)
     monkeypatch.setattr(storage, "delete", delete)
     monkeypatch.setattr(get_settings(), "blob_read_write_token", "test-token")
     return fake
@@ -911,6 +936,21 @@ def test_direct_upload_is_registered_streamed_back_and_deleted_with_its_blob(cli
     assert client.delete(f"/api/documents/{doc}").status_code == 204
     assert blob.deleted == [path]
     assert client.get(f"/api/documents/{doc}/file").status_code == 404
+
+
+def test_a_direct_upload_can_be_read_in_ranges(client, blob):
+    data = SAMPLE.read_bytes()
+    doc = register(client, blob.put("dev:alice", "udhr.pdf", data)).json()["id"]
+    url = f"/api/documents/{doc}/file"
+    whole = client.get(url)
+    assert whole.status_code == 200 and whole.headers["accept-ranges"] == "bytes"
+    # Across the fake store's 100 kB pieces.
+    got = client.get(url, headers={"Range": "bytes=150000-195000"})
+    assert got.status_code == 206 and got.content == data[150000:195001]
+    assert got.headers["content-range"] == f"bytes 150000-195000/{len(data)}"
+    assert int(got.headers["content-length"]) == 45001
+    assert client.get(url, headers={"Range": "bytes=-100"}).content == data[-100:]
+    assert client.get(url, headers={"Range": f"bytes={len(data)}-"}).status_code == 416
 
 
 def test_register_refuses_someone_elses_or_malformed_pathnames(client, blob):
@@ -964,6 +1004,62 @@ def test_a_big_pdf_is_streamed_whole_from_postgres(client, clean):
     r = client.get(f"/api/documents/{doc}/file")
     assert r.content == big.read_bytes()
     assert int(r.headers["content-length"]) == big.stat().st_size
+
+
+def test_a_direct_upload_range_is_asked_of_storage_when_it_can_answer(client, blob):
+    data = SAMPLE.read_bytes()
+    doc = register(client, blob.put("dev:alice", "udhr.pdf", data)).json()["id"]
+    blob.ranged = True
+    got = client.get(f"/api/documents/{doc}/file", headers={"Range": "bytes=1000-1999"})
+    assert got.status_code == 206 and got.content == data[1000:2000]
+    assert got.headers["content-range"] == f"bytes 1000-1999/{len(data)}"
+    assert int(got.headers["content-length"]) == 1000
+    assert blob.range_reads == [(1000, 1999)]
+    several = client.get(f"/api/documents/{doc}/file", headers={"Range": "bytes=0-9,20-30"})
+    assert several.content == data
+    gone = client.get(f"/api/documents/{doc}/file", headers={"Range": f"bytes={len(data)}-"})
+    assert gone.status_code == 416 and gone.headers["content-range"] == f"bytes */{len(data)}"
+
+
+def test_a_stored_pdf_is_served_in_ranges(client, clean):
+    data = SAMPLE.read_bytes()
+    doc = _seed_sample(SAMPLE).document_id
+    url = f"/api/documents/{doc}/file"
+    got = client.get(url, headers={"Range": "bytes=0-1023"})
+    assert got.status_code == 206 and got.content == data[:1024]
+    assert got.headers["content-range"] == f"bytes 0-1023/{len(data)}"
+    assert got.headers["accept-ranges"] == "bytes"
+    assert client.get(url, headers={"Range": "bytes=-500"}).content == data[-500:]
+    tail = client.get(url, headers={"Range": f"bytes={len(data) - 10}-{len(data) + 99}"})
+    assert tail.content == data[-10:] and tail.status_code == 206  # a long end is clamped
+    gone = client.get(url, headers={"Range": f"bytes={len(data)}-"})
+    assert gone.status_code == 416 and gone.headers["content-range"] == f"bytes */{len(data)}"
+    for ignored in ("pages=1-2", "bytes=0-5,10-20", "bytes=9-2", "bytes=-"):
+        assert client.get(url, headers={"Range": ignored}).content == data, ignored
+
+
+def test_a_range_cannot_reach_someone_elses_file(client, bob, clean):
+    mine = upload(client).json()["id"]
+    got = bob.get(f"/api/documents/{mine}/file", headers={"Range": "bytes=0-9"})
+    assert got.status_code == 404
+
+
+def test_cors_lets_the_viewer_send_and_read_ranges(client):
+    pre = client.options(
+        "/api/documents/x/file",
+        headers={
+            "Origin": get_settings().cors_origins[0],
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,range",
+        },
+    )
+    assert pre.status_code == 200 and "range" in pre.headers["access-control-allow-headers"].lower()
+    assert pre.headers["access-control-max-age"] == "600"
+    sample = _seed_sample(SAMPLE).document_id
+    origin = get_settings().cors_origins[0]
+    got = client.get(f"/api/documents/{sample}/file", headers={"Origin": origin})
+    exposed = got.headers["access-control-expose-headers"].lower()
+    assert "content-range" in exposed and "content-length" in exposed
 
 
 def test_delete_me_deletes_the_users_blobs(client, blob):
